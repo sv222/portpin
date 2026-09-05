@@ -1,0 +1,8 @@
+/dist/
+/portpin
+/portpin.exe
+*.test
+*.exe
+.idea/
+.vscode/
+.superpowers/
