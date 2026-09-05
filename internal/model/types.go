@@ -91,3 +91,17 @@ type Binding struct {
 
 // IsKernelOwned reports whether the socket has no owning user process.
 func (b Binding) IsKernelOwned() bool { return b.Proc == nil }
+
+// MarshalJSON renders the enums as their stable string names. The JSON schema
+// is a public interface from v0.1 onward: names may be added, but existing
+// names never change.
+func (p Protocol) MarshalJSON() ([]byte, error)    { return quoteJSON(p.String()), nil }
+func (s SocketState) MarshalJSON() ([]byte, error) { return quoteJSON(s.String()), nil }
+func (l Lifecycle) MarshalJSON() ([]byte, error)   { return quoteJSON(l.String()), nil }
+
+func quoteJSON(s string) []byte {
+	out := make([]byte, 0, len(s)+2)
+	out = append(out, '"')
+	out = append(out, s...)
+	return append(out, '"')
+}
