@@ -7,3 +7,11 @@
 .vscode/
 .superpowers/
 .worktrees/
+.DS_Store
+Thumbs.db
+*.log
+coverage.out
+*.prof
+/docs/superpowers/
+/reports/
+/idea1.md
