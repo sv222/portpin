@@ -87,6 +87,11 @@ portpin -j 8080              # JSON output
 - **Process-tree teardown (`--group`) is not in v0.1.** Killing a supervised
   worker still lets its supervisor respawn it. That lands in v0.2 with a guard
   that refuses to take down your shell.
+- **Windows: split stdout/stderr redirection can misroute output.** If stdout is
+  a real terminal and stderr alone is redirected to a file (or the reverse), the
+  console detach/reattach the graceful stop needs can send output to the wrong
+  place for that run. Both streams together on a terminal, or both piped or
+  redirected, are unaffected.
 
 ## License
 
