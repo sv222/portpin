@@ -42,3 +42,36 @@ func (f Filter) Matches(b Binding) bool {
 	}
 	return got == want
 }
+
+// NarrowToExactMatch is a post-filter refinement: when the caller asked for
+// a specific bind address and more than one binding still matches Matches's
+// lenient rules (a specific-address binding AND a wildcard binding both
+// technically cover that address), only the specific-address binding is
+// kept. A wildcard listener is the right answer only when nothing more
+// specific exists for the requested address - otherwise keeping it would
+// silently widen portpin's blast radius to a sibling service that happens
+// to also be reachable at that address, which is exactly the mistake the
+// endpoint-disambiguation feature exists to prevent.
+//
+// A bare-port or explicit-wildcard request (f.IP == nil, or f.IP itself
+// unspecified) is left untouched: the caller asked for "anything here", so
+// every match is a legitimate answer.
+func (f Filter) NarrowToExactMatch(candidates []Binding) []Binding {
+	if f.IP == nil {
+		return candidates
+	}
+	want := f.IP.Unmap()
+	if want.IsUnspecified() {
+		return candidates
+	}
+	var exact []Binding
+	for _, b := range candidates {
+		if b.Endpoint.Addr().Unmap() == want {
+			exact = append(exact, b)
+		}
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+	return candidates
+}

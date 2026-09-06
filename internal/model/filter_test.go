@@ -55,3 +55,48 @@ func TestFilterMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestNarrowToExactMatchPrefersSpecificOverWildcard(t *testing.T) {
+	f := Filter{Port: 8080, IP: ptr("127.0.0.1"), Protocol: TCP}
+	candidates := []Binding{
+		bind("127.0.0.1:8080", TCP),
+		bind("0.0.0.0:8080", TCP),
+	}
+	got := f.NarrowToExactMatch(candidates)
+	if len(got) != 1 || got[0].Endpoint.String() != "127.0.0.1:8080" {
+		t.Fatalf("NarrowToExactMatch() = %v, want only the exact 127.0.0.1:8080 binding", got)
+	}
+}
+
+func TestNarrowToExactMatchFallsBackWhenNoExactMatch(t *testing.T) {
+	f := Filter{Port: 8080, IP: ptr("127.0.0.1"), Protocol: TCP}
+	candidates := []Binding{bind("0.0.0.0:8080", TCP)}
+	got := f.NarrowToExactMatch(candidates)
+	if len(got) != 1 {
+		t.Fatalf("NarrowToExactMatch() = %v, want the wildcard binding kept when it's the only match", got)
+	}
+}
+
+func TestNarrowToExactMatchLeavesBarePortRequestsAlone(t *testing.T) {
+	f := Filter{Port: 8080, Protocol: TCP} // no IP: bare port
+	candidates := []Binding{
+		bind("127.0.0.1:8080", TCP),
+		bind("0.0.0.0:8080", TCP),
+	}
+	got := f.NarrowToExactMatch(candidates)
+	if len(got) != 2 {
+		t.Fatalf("NarrowToExactMatch() = %v, want both kept for a bare-port request", got)
+	}
+}
+
+func TestNarrowToExactMatchLeavesExplicitWildcardRequestsAlone(t *testing.T) {
+	f := Filter{Port: 8080, IP: ptr("0.0.0.0"), Protocol: TCP}
+	candidates := []Binding{
+		bind("127.0.0.1:8080", TCP),
+		bind("0.0.0.0:8080", TCP),
+	}
+	got := f.NarrowToExactMatch(candidates)
+	if len(got) != 2 {
+		t.Fatalf("NarrowToExactMatch() = %v, want both kept for an explicit 0.0.0.0 request", got)
+	}
+}

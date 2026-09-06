@@ -77,7 +77,11 @@ func (r *linuxResolver) Resolve(f model.Filter) ([]model.Binding, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	return r.attachOwners(candidates)
+	bindings, err := r.attachOwners(candidates)
+	if err != nil {
+		return nil, err
+	}
+	return f.NarrowToExactMatch(bindings), nil
 }
 
 func (r *linuxResolver) ListAll() ([]model.Binding, error) {

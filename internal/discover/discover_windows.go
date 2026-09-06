@@ -150,7 +150,11 @@ func (w *windowsResolver) collect(match func(model.Binding) bool) ([]model.Bindi
 }
 
 func (w *windowsResolver) Resolve(f model.Filter) ([]model.Binding, error) {
-	return w.collect(f.Matches)
+	bindings, err := w.collect(f.Matches)
+	if err != nil {
+		return nil, err
+	}
+	return f.NarrowToExactMatch(bindings), nil
 }
 
 func (w *windowsResolver) ListAll() ([]model.Binding, error) {
