@@ -4,6 +4,8 @@ package pin
 
 import (
 	"sync"
+	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 
@@ -100,15 +102,47 @@ func freeConsole() error {
 	return nil
 }
 
-// setConsoleCtrlHandler installs (add=true) or removes (add=false) a NULL
-// handler, which makes the calling process ignore (or stop ignoring)
-// Ctrl-C/Ctrl-Break. Raw NewProc call: see the kernel32 var block above.
+// ctrlHandlerPtr is a real Win32 HandlerRoutine callback, installed once via
+// SetConsoleCtrlHandler, that claims CTRL_C_EVENT and CTRL_BREAK_EVENT as
+// handled for this process. This replaces an earlier NULL-handler approach
+// that only suppressed CTRL_C_EVENT: per Win32's documented behavior, a NULL
+// handler with Add=TRUE ignores CTRL+C only, never CTRL+BREAK. Since
+// Graceful() broadcasts CTRL_BREAK_EVENT after joining the target's console,
+// the NULL-handler version let portpin kill itself with its own broadcast
+// the moment AttachConsole actually succeeded against a real target.
+//
+// syscall.NewCallback must be called at most once per distinct function
+// value used this way; a package-level var initializer is the standard
+// pattern for a callback used for the life of the process.
+var ctrlHandlerPtr = syscall.NewCallback(ctrlHandlerRoutine)
+
+// ctrlHandlerRoutine is the Win32 HandlerRoutine callback body. Returning a
+// nonzero (TRUE) value tells Windows this handler processed the event, so no
+// further handler or the default termination action runs for it on this
+// process. Parameters and the return value are uintptr because
+// syscall.NewCallback requires pointer-sized arguments and result.
+func ctrlHandlerRoutine(ctrlType uintptr) uintptr {
+	switch ctrlType {
+	case 0, 1: // CTRL_C_EVENT, CTRL_BREAK_EVENT
+		return 1
+	default:
+		return 0
+	}
+}
+
+// setConsoleCtrlHandler installs (add=true) or removes (add=false) the
+// ctrlHandlerRoutine callback above, which ignores CTRL-C/CTRL-BREAK for this
+// process only. Raw NewProc call: see the kernel32 var block above.
+//
+// Removing a specific (non-NULL) handler requires passing the SAME pointer
+// that was used to install it, so both the add and remove calls below use
+// ctrlHandlerPtr, never 0.
 func setConsoleCtrlHandler(add bool) error {
 	var addFlag uintptr
 	if add {
 		addFlag = 1
 	}
-	r, _, err := procSetConsoleCtrlHandler.Call(0, addFlag)
+	r, _, err := procSetConsoleCtrlHandler.Call(ctrlHandlerPtr, addFlag)
 	if r == 0 {
 		return err
 	}
@@ -153,6 +187,16 @@ func (c *windowsController) Graceful() error {
 	if err := windows.GenerateConsoleCtrlEvent(ctrlBreakEvent, 0); err != nil {
 		return err
 	}
+
+	// GenerateConsoleCtrlEvent only queues delivery; Windows dispatches the
+	// event to every attached process, including this one, asynchronously on
+	// its own schedule via a separate system thread that invokes our
+	// registered handler. Returning immediately lets the deferred cleanup
+	// above remove that handler before the dispatch necessarily lands: if
+	// removal wins the race, the event arrives with no handler installed and
+	// the default action (process termination) runs on portpin itself. This
+	// short wait lets the dispatch land while the handler is still in place.
+	time.Sleep(300 * time.Millisecond)
 	return nil
 }
 

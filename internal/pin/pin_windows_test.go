@@ -3,6 +3,7 @@
 package pin
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/sv222/portpin/internal/discover"
 	"github.com/sv222/portpin/internal/model"
+	"github.com/sv222/portpin/internal/testutil"
 )
 
 func spawnSleeper(t *testing.T) (*exec.Cmd, model.ProcMeta) {
@@ -104,6 +106,46 @@ func TestLifecycleReportsGone(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("never observed the gone state")
+}
+
+// TestGracefulDoesNotSelfTerminate is a regression test for a real bug: a
+// NULL console-control handler only suppresses CTRL_C_EVENT, never
+// CTRL_BREAK_EVENT - so once Graceful() successfully attaches to a real
+// target's console and broadcasts CTRL_BREAK, the broadcast used to kill
+// portpin's own process (and the test itself) before it could ever report
+// success. testutil.StartListener gives the target its own console and
+// blocks until it reports READY, so AttachConsole has a real, fully warmed
+// up console to join, forcing this test through the success path rather
+// than ErrNoConsole. Before the fix, reaching this point with the old
+// NULL-handler code would kill this very test process via the CTRL_BREAK
+// broadcast - so simply completing this test at all, not just its
+// assertions, is part of what it verifies.
+func TestGracefulDoesNotSelfTerminate(t *testing.T) {
+	addr := fmt.Sprintf("127.0.0.1:%d", testutil.FreePort(t))
+	l := testutil.StartListener(t, addr)
+
+	pid := uint32(l.PID)
+	ct, err := discover.ReadCreationTime(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Pin(model.ProcMeta{PID: pid, StartTime: ct})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	if err := c.Graceful(); err != nil {
+		t.Fatalf("Graceful() = %v, want nil (target has its own console, so AttachConsole must succeed)", err)
+	}
+
+	done := make(chan struct{})
+	go func() { _ = l.Cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("target did not exit after a successful Graceful() CTRL_BREAK")
+	}
 }
 
 func TestSelfPinIsAlive(t *testing.T) {
