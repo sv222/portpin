@@ -148,6 +148,39 @@ func TestGracefulDoesNotSelfTerminate(t *testing.T) {
 	}
 }
 
+// TestGracefulSetsConsoleDetachedFlag is a regression test for the console-
+// output bug fixed alongside this: Graceful always frees the calling
+// process's own console on entry (see the doc comment on Graceful), so
+// ConsoleDetached must latch true after any Graceful call, whether or not it
+// went on to find an attachable target console. The flag is monotonic and
+// process-global, so this only asserts the true direction — it never resets,
+// and other tests in this file may have already flipped it before this one
+// runs.
+func TestGracefulSetsConsoleDetachedFlag(t *testing.T) {
+	cmd, meta := spawnSleeper(t)
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	c, err := Pin(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	if err := c.Graceful(); err != nil && err != ErrNoConsole {
+		t.Fatalf("Graceful() = %v, want nil or ErrNoConsole", err)
+	}
+	if !ConsoleDetached() {
+		t.Fatal("ConsoleDetached() = false after a Graceful() call, want true: " +
+			"freeConsole is always called on entry regardless of outcome")
+	}
+}
+
+func TestGracefulMayDetachConsoleIsTrueOnWindows(t *testing.T) {
+	if !GracefulMayDetachConsole() {
+		t.Fatal("GracefulMayDetachConsole() = false on windows, want true")
+	}
+}
+
 func TestSelfPinIsAlive(t *testing.T) {
 	pid := uint32(os.Getpid())
 	ct, err := discover.ReadCreationTime(pid)

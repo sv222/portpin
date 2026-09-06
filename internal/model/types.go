@@ -89,8 +89,11 @@ type Binding struct {
 	Proc     *ProcMeta      `json:"proc,omitempty"`
 }
 
-// IsKernelOwned reports whether the socket has no owning user process.
-func (b Binding) IsKernelOwned() bool { return b.Proc == nil }
+// IsKernelOwned reports whether the socket is genuinely kernel-owned with
+// definitively no process to signal: a TIME_WAIT row with no owning process.
+// A nil Proc on a non-TIME_WAIT binding means the owner exists but this user
+// cannot inspect it (permission denied), which is not kernel ownership.
+func (b Binding) IsKernelOwned() bool { return b.Proc == nil && b.State == StateTimeWait }
 
 // MarshalJSON renders the enums as their stable string names. The JSON schema
 // is a public interface from v0.1 onward: names may be added, but existing

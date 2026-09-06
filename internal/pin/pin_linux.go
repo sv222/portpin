@@ -16,6 +16,22 @@ import (
 	"github.com/sv222/portpin/internal/model"
 )
 
+// ConsoleDetached always reports false on Linux: Graceful here is a plain
+// SIGTERM with no console interaction, so it can never invalidate stdio.
+func ConsoleDetached() bool { return false }
+
+// GracefulMayDetachConsole always reports false on Linux; see the Windows
+// implementation's doc comment for what this gates.
+func GracefulMayDetachConsole() bool { return false }
+
+// RestoreConsole has no Linux equivalent and is never called here in
+// practice, since GracefulMayDetachConsole is always false — callers gate on
+// that before ever reaching this. It exists only so cmd/portpin can call
+// pin.RestoreConsole unconditionally from platform-neutral code.
+func RestoreConsole() (*os.File, error) {
+	return nil, errors.New("pin: RestoreConsole is not supported on this platform")
+}
+
 type linuxController struct {
 	meta model.ProcMeta
 

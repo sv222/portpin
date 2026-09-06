@@ -45,6 +45,16 @@ func TestBindingIsKernelOwned(t *testing.T) {
 
 	kernel := Binding{Endpoint: ap, State: StateTimeWait}
 	if !kernel.IsKernelOwned() {
-		t.Error("binding without Proc must be kernel-owned")
+		t.Error("nil-Proc TIME_WAIT binding must be kernel-owned")
+	}
+
+	permissionDenied := Binding{Endpoint: ap, State: StateCloseWait}
+	if permissionDenied.IsKernelOwned() {
+		t.Error("nil-Proc non-TIME_WAIT binding (permission denied) must not be kernel-owned")
+	}
+
+	listenPermissionDenied := Binding{Endpoint: ap, State: StateListen}
+	if listenPermissionDenied.IsKernelOwned() {
+		t.Error("nil-Proc LISTEN binding (permission denied) must not be kernel-owned")
 	}
 }

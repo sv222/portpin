@@ -4,10 +4,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -154,30 +157,19 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 		return exitOK
 	}
 
-	// Kernel-owned only: TIME_WAIT has no process to signal.
 	owned := ownedBindings(bindings)
 	if len(owned) == 0 {
-		report.ExitCode = exitTimeWait
-		emit(f, report, timeWaitMessage())
-		return exitTimeWait
-	}
-
-	if f.dryRun {
-		report.ExitCode = exitOK
-		if !f.jsonOut {
-			_ = render.Table(os.Stdout, bindings)
-			for _, b := range owned {
-				if a := advise.ForProcess(*b.Proc); a != nil {
-					fmt.Println(strings.Join(a.Lines, "\n"))
-				}
-			}
-		} else {
-			_ = render.JSON(os.Stdout, report)
+		if allTimeWait(bindings) {
+			report.ExitCode = exitTimeWait
+			emit(f, report, timeWaitMessage())
+			return exitTimeWait
 		}
-		return exitOK
+		report.ExitCode = exitPermission
+		emit(f, report, permissionMessage())
+		return exitPermission
 	}
 
-	// Confirmation: several owners, or a container-proxy advisory.
+	// Confirmation and advisories: several owners, or a container-proxy warning.
 	advisories := make(map[uint32]*advise.Advisory, len(owned))
 	needConfirm := len(owned) > 1
 	for _, b := range owned {
@@ -186,7 +178,30 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 			needConfirm = true
 		}
 	}
-	if needConfirm && !f.yes && !f.force {
+
+	if f.dryRun {
+		report.ExitCode = exitOK
+		for _, b := range owned {
+			report.Actions = append(report.Actions, render.Action{
+				PID:      b.Proc.PID,
+				Outcome:  "dry-run",
+				Advisory: advisories[b.Proc.PID],
+			})
+		}
+		if !f.jsonOut {
+			_ = render.Table(os.Stdout, bindings)
+			for _, act := range report.Actions {
+				if act.Advisory != nil {
+					fmt.Println(strings.Join(act.Advisory.Lines, "\n"))
+				}
+			}
+		} else {
+			_ = render.JSON(os.Stdout, report)
+		}
+		return exitOK
+	}
+
+	if needConfirm && !f.yes {
 		if !confirm(owned, advisories) {
 			report.ExitCode = exitFailure
 			emit(f, report, "aborted")
@@ -197,6 +212,18 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	opts := terminate.DefaultOptions()
 	opts.Force = f.force
 	opts.Timeout = time.Duration(f.timeout) * time.Millisecond
+
+	// On Windows, a graceful stop below may detach this process from its own
+	// console to join a target's, permanently invalidating the cached
+	// os.Stdout/os.Stderr handles (see internal/pin). guard buffers every
+	// write those two files would otherwise perform for the rest of this
+	// function and replays it through a freshly restored console once the
+	// whole kill loop — every possible Graceful() call — has finished. It is
+	// a no-op whenever os.Stdout is not an interactive console (the existing
+	// pipe-based test harness included) or on platforms where Graceful can
+	// never touch a console at all.
+	guard := beginConsoleOutputWorkaround()
+	defer guard.finish()
 
 	worst := exitOK
 	for _, b := range owned {
@@ -217,7 +244,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 			worst = code
 		}
 		if !f.jsonOut {
-			printOutcome(b, res)
+			printOutcome(b, res, advisories[res.PID])
 		}
 	}
 
@@ -226,6 +253,103 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 		_ = render.JSON(os.Stdout, report)
 	}
 	return worst
+}
+
+// consoleOutputWorkaround captures os.Stdout/os.Stderr into memory for the
+// span of a kill loop that may call Graceful() on Windows. See beginConsole-
+// OutputWorkaround for when it actually does anything.
+type consoleOutputWorkaround struct {
+	active                 bool
+	origStdout, origStderr *os.File
+	outW, errW             *os.File
+	outBuf, errBuf         bytes.Buffer
+	drained                chan struct{}
+}
+
+// beginConsoleOutputWorkaround redirects os.Stdout and os.Stderr to
+// in-memory buffers, but only when doing so is actually necessary: os.Stdout
+// must be a real interactive console (a pipe or redirected file is never
+// affected by FreeConsole, so the existing pipe-based tests and any
+// redirected/scripted use of portpin are untouched), and the platform's
+// Graceful implementation must be capable of detaching from one at all.
+//
+// When inactive, the returned guard's finish is a no-op and os.Stdout/
+// os.Stderr are left exactly as they were.
+func beginConsoleOutputWorkaround() *consoleOutputWorkaround {
+	g := &consoleOutputWorkaround{}
+	if !isConsole(os.Stdout) || !pin.GracefulMayDetachConsole() {
+		return g
+	}
+
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return g
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		_ = outR.Close()
+		_ = outW.Close()
+		return g
+	}
+
+	g.active = true
+	g.origStdout, g.origStderr = os.Stdout, os.Stderr
+	g.outW, g.errW = outW, errW
+	os.Stdout, os.Stderr = outW, errW
+
+	g.drained = make(chan struct{})
+	go func() {
+		defer close(g.drained)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = io.Copy(&g.outBuf, outR) }()
+		go func() { defer wg.Done(); _, _ = io.Copy(&g.errBuf, errR) }()
+		wg.Wait()
+	}()
+	return g
+}
+
+// finish restores the real os.Stdout/os.Stderr and replays whatever was
+// buffered during the guarded span. If Graceful ever actually detached this
+// process's console, it re-establishes one first (see pin.RestoreConsole)
+// and writes through a fresh handle to it rather than through os.Stdout,
+// whose cached handle stays invalid even after reattaching. Otherwise — the
+// console was never touched, which only happens when every kill in this run
+// used --force (Graceful is never called at all, ErrNoConsole included,
+// since that still frees the console first before reporting no target to
+// attach to) — the buffered output is written to the real, still-valid
+// os.Stdout/os.Stderr with no console dance at all.
+func (g *consoleOutputWorkaround) finish() {
+	if !g.active {
+		return
+	}
+	_ = g.outW.Close()
+	_ = g.errW.Close()
+	<-g.drained
+	os.Stdout, os.Stderr = g.origStdout, g.origStderr
+
+	if pin.ConsoleDetached() {
+		if console, err := pin.RestoreConsole(); err == nil {
+			_, _ = console.Write(g.outBuf.Bytes())
+			_, _ = console.Write(g.errBuf.Bytes())
+			_ = console.Close()
+			return
+		}
+		// Best effort: fall through and try the (possibly still-invalid)
+		// original stdio rather than dropping the output outright.
+	}
+	_, _ = os.Stdout.Write(g.outBuf.Bytes())
+	_, _ = os.Stderr.Write(g.errBuf.Bytes())
+}
+
+// isConsole reports whether f is attached to an interactive console, as
+// opposed to a pipe or a redirected file.
+func isConsole(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // killOne pins one binding's owner and drives the state machine. The port
@@ -271,11 +395,20 @@ func killOne(r discover.Resolver, filter model.Filter, b model.Binding, opts ter
 func ownedBindings(bs []model.Binding) []model.Binding {
 	var out []model.Binding
 	for _, b := range bs {
-		if !b.IsKernelOwned() {
+		if b.Proc != nil {
 			out = append(out, b)
 		}
 	}
 	return out
+}
+
+func allTimeWait(bs []model.Binding) bool {
+	for _, b := range bs {
+		if b.State != model.StateTimeWait {
+			return false
+		}
+	}
+	return true
 }
 
 func timeWaitMessage() string {
@@ -285,6 +418,10 @@ func timeWaitMessage() string {
 		fmt.Fprintf(&sb, "\nit drains on its own; net.ipv4.tcp_fin_timeout is %s", d)
 	}
 	return sb.String()
+}
+
+func permissionMessage() string {
+	return "endpoint is held by a process this user cannot inspect; re-run with elevated privileges"
 }
 
 func exitCodeFor(o terminate.Outcome) int {
@@ -302,7 +439,10 @@ func exitCodeFor(o terminate.Outcome) int {
 	}
 }
 
-func printOutcome(b model.Binding, res terminate.Result) {
+func printOutcome(b model.Binding, res terminate.Result, adv *advise.Advisory) {
+	if adv != nil {
+		fmt.Println(strings.Join(adv.Lines, "\n"))
+	}
 	name := "?"
 	if b.Proc != nil && b.Proc.Name != "" {
 		name = b.Proc.Name
@@ -335,8 +475,7 @@ func confirm(bs []model.Binding, advisories map[uint32]*advise.Advisory) bool {
 		fmt.Fprintln(os.Stderr, strings.Join(a.Lines, "\n"))
 	}
 
-	fi, err := os.Stdin.Stat()
-	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+	if !isConsole(os.Stdin) {
 		fmt.Fprintln(os.Stderr, "confirmation required but stdin is not a terminal; re-run with --yes")
 		return false
 	}

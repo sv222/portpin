@@ -133,6 +133,84 @@ func TestMultiInterfaceDisambiguation(t *testing.T) {
 	}
 }
 
+// TestForceAloneStillPromptsForMultiMatch: --force alone must not bypass the
+// multi-owner confirmation prompt - only --yes does. With no controlling
+// terminal (as under CombinedOutput here), the tool must refuse rather than
+// silently hard-killing every match.
+func TestForceAloneStillPromptsForMultiMatch(t *testing.T) {
+	port := testutil.FreePort(t)
+
+	second := fmt.Sprintf("127.0.0.2:%d", port)
+	if runtime.GOOS == "windows" {
+		second = fmt.Sprintf("0.0.0.0:%d", port)
+	}
+	target := fmt.Sprintf("127.0.0.1:%d", port)
+
+	if runtime.GOOS == "windows" {
+		testutil.StartListener(t, second)
+		testutil.StartListener(t, target)
+	} else {
+		testutil.StartListener(t, target)
+		testutil.StartListener(t, second)
+	}
+
+	// A bare port (no --ip) leaves both bindings as candidates.
+	const exitFailure = 1
+	code, out := runPortpin(t, "-f", fmt.Sprintf("%d", port))
+	if code != exitFailure {
+		t.Fatalf("exit code = %d, want %d (force alone must still require confirmation)\n%s", code, exitFailure, out)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if testutil.PortIsFree(target) || testutil.PortIsFree(second) {
+		t.Fatalf("a listener was killed despite the aborted confirmation\n%s", out)
+	}
+}
+
+// TestDryRunJSONShowsAdvisory verifies the container-proxy advisory reaches
+// the JSON path in --dry-run, not just the human table: render.Report.Actions
+// must carry it via Action.Advisory even though nothing is actually killed.
+func TestDryRunJSONShowsAdvisory(t *testing.T) {
+	port := testutil.FreePort(t)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	testutil.StartListenerNamed(t, addr, "docker-proxy")
+
+	code, out := runPortpin(t, "--dry-run", "-j", addr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\n%s", code, out)
+	}
+
+	var doc struct {
+		ExitCode int `json:"exit_code"`
+		Actions  []struct {
+			PID      uint32 `json:"pid"`
+			Outcome  string `json:"outcome"`
+			Advisory *struct {
+				Kind  string   `json:"kind"`
+				Lines []string `json:"lines"`
+			} `json:"advisory"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(doc.Actions) != 1 {
+		t.Fatalf("actions = %+v, want exactly one dry-run action", doc.Actions)
+	}
+	if doc.Actions[0].Outcome != "dry-run" {
+		t.Errorf("outcome = %q, want %q", doc.Actions[0].Outcome, "dry-run")
+	}
+	if doc.Actions[0].Advisory == nil {
+		t.Fatalf("advisory = nil, want the container-proxy advisory to be present\n%s", out)
+	}
+	if doc.Actions[0].Advisory.Kind != "container-proxy" {
+		t.Errorf("advisory.kind = %q, want %q", doc.Actions[0].Advisory.Kind, "container-proxy")
+	}
+	if testutil.PortIsFree(addr) {
+		t.Fatal("--dry-run terminated the listener")
+	}
+}
+
 func TestListShowsTheListener(t *testing.T) {
 	port := testutil.FreePort(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)

@@ -27,6 +27,24 @@ func spawnSleeper(t *testing.T) (*exec.Cmd, model.ProcMeta) {
 	return cmd, model.ProcMeta{PID: pid, StartTime: st, Name: "sleep"}
 }
 
+func TestConsoleDetachedIsAlwaysFalseOnLinux(t *testing.T) {
+	if ConsoleDetached() {
+		t.Fatal("ConsoleDetached() = true on linux, want always false")
+	}
+}
+
+func TestGracefulMayDetachConsoleIsFalseOnLinux(t *testing.T) {
+	if GracefulMayDetachConsole() {
+		t.Fatal("GracefulMayDetachConsole() = true on linux, want false")
+	}
+}
+
+func TestRestoreConsoleFailsOnLinux(t *testing.T) {
+	if _, err := RestoreConsole(); err == nil {
+		t.Fatal("RestoreConsole() = nil error on linux, want an error (no console concept here)")
+	}
+}
+
 func TestPinAndGracefulStop(t *testing.T) {
 	cmd, meta := spawnSleeper(t)
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()

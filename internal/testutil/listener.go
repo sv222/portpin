@@ -97,8 +97,22 @@ func listenerBinary(t *testing.T) string {
 // artificial same-console child-process default.
 func StartListener(t *testing.T, addr string) *Listener {
 	t.Helper()
+	return startListenerFromBinary(t, listenerBinary(t), addr)
+}
 
-	cmd := exec.Command(listenerBinary(t), addr)
+// StartListenerNamed behaves like StartListener, but the helper binary is
+// built under procName so the spawned process is discoverable by that name -
+// e.g. for exercising advisories keyed off a process name such as
+// "docker-proxy", which cannot be produced by spawning a real one in a test.
+func StartListenerNamed(t *testing.T, addr, procName string) *Listener {
+	t.Helper()
+	return startListenerFromBinary(t, namedListenerBinary(t, procName), addr)
+}
+
+func startListenerFromBinary(t *testing.T, bin, addr string) *Listener {
+	t.Helper()
+
+	cmd := exec.Command(bin, addr)
 	detachConsole(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -130,6 +144,41 @@ func StartListener(t *testing.T, addr string) *Listener {
 		t.Fatal("listener never reported READY")
 	}
 	return l
+}
+
+var (
+	namedBuildMu    sync.Mutex
+	namedBuildCache = map[string]string{}
+)
+
+// namedListenerBinary compiles the helper listener under procName, once per
+// distinct name per test run.
+func namedListenerBinary(t *testing.T, procName string) string {
+	t.Helper()
+	namedBuildMu.Lock()
+	defer namedBuildMu.Unlock()
+
+	if bin, ok := namedBuildCache[procName]; ok {
+		return bin
+	}
+	dir, err := os.MkdirTemp("", "portpin-listener-named")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(src, []byte(listenerSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, procName)
+	if runtime.GOOS == "windows" {
+		out += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", out, src)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building the named listener helper failed: %v\n%s", err, b)
+	}
+	namedBuildCache[procName] = out
+	return out
 }
 
 // FreePort returns a TCP port that was free a moment ago.

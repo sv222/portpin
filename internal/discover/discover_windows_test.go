@@ -3,6 +3,7 @@
 package discover
 
 import (
+	"errors"
 	"net"
 	"os"
 	"testing"
@@ -51,6 +52,41 @@ func TestResolveFindsOwnListener(t *testing.T) {
 	}
 	if b.Proc.Name == "" {
 		t.Error("owner name is empty; QueryFullProcessImageName failed for our own process")
+	}
+}
+
+func TestAllPropagatesV4TableError(t *testing.T) {
+	orig := fetchTableFn
+	defer func() { fetchTableFn = orig }()
+
+	wantErr := errors.New("simulated iphlpapi failure")
+	fetchTableFn = func(proto model.Protocol, v6 bool) ([]byte, error) {
+		if v6 {
+			return orig(proto, v6)
+		}
+		return nil, wantErr
+	}
+
+	r := &windowsResolver{}
+	if _, err := r.all(); !errors.Is(err, wantErr) {
+		t.Fatalf("all() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestAllStillSwallowsV6TableError(t *testing.T) {
+	orig := fetchTableFn
+	defer func() { fetchTableFn = orig }()
+
+	fetchTableFn = func(proto model.Protocol, v6 bool) ([]byte, error) {
+		if v6 {
+			return nil, errors.New("simulated: ipv6 disabled")
+		}
+		return orig(proto, v6)
+	}
+
+	r := &windowsResolver{}
+	if _, err := r.all(); err != nil {
+		t.Fatalf("all() error = %v, want nil (v6 absence must not propagate)", err)
 	}
 }
 

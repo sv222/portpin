@@ -49,6 +49,10 @@ var winTables = []winTableSpec{
 // call stops reporting ERROR_INSUFFICIENT_BUFFER. The table can grow between
 // the size query and the read, so the loop is bounded rather than a single
 // retry.
+// fetchTableFn is a package-level indirection so tests can inject a failing
+// table fetch without a real IPHlpAPI error.
+var fetchTableFn = fetchTable
+
 func fetchTable(proto model.Protocol, v6 bool) ([]byte, error) {
 	proc := procGetExtendedTcp
 	class := uintptr(tcpTableOwnerPidAll)
@@ -98,10 +102,12 @@ type winBinding struct {
 func (w *windowsResolver) all() ([]winBinding, error) {
 	var out []winBinding
 	for _, spec := range winTables {
-		buf, err := fetchTable(spec.proto, spec.v6)
+		buf, err := fetchTableFn(spec.proto, spec.v6)
 		if err != nil {
-			// A missing address family (IPv6 disabled) must not hide IPv4.
-			continue
+			if spec.v6 {
+				continue
+			}
+			return nil, err
 		}
 		rows, err := DecodeWinTable(buf, spec.proto, spec.v6)
 		if err != nil {
