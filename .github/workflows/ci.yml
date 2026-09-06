@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          check-latest: true
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test -race ./...
+      - name: Integration tests
+        run: go test -tags integration ./test/integration/ -timeout 10m
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          check-latest: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  crossbuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          check-latest: true
+      - name: Build every release target
+        run: |
+          GOOS=linux   GOARCH=amd64 go build ./cmd/portpin
+          GOOS=linux   GOARCH=arm64 go build ./cmd/portpin
+          GOOS=windows GOARCH=amd64 go build ./cmd/portpin
