@@ -5,13 +5,12 @@
 *.exe
 .idea/
 .vscode/
-.superpowers/
 .worktrees/
 .DS_Store
 Thumbs.db
 *.log
 coverage.out
 *.prof
-/docs/superpowers/
 /reports/
-/idea1.md
+
+# Local-only tool ignores live in .git/info/exclude, not here.
