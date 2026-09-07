@@ -1,5 +1,10 @@
 # portpin
 
+[![CI](https://github.com/sv222/portpin/actions/workflows/ci.yml/badge.svg)](https://github.com/sv222/portpin/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/sv222/portpin.svg)](https://pkg.go.dev/github.com/sv222/portpin)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Find and kill the process holding a TCP or UDP port, on Windows and Linux.
 Release a port without losing your data.
 
 `lsof -ti :8080 | xargs kill -9` works until it doesn't. When it doesn't, it
@@ -28,7 +33,7 @@ addresses. Ask for the one you mean.
 **State classification.** A port in `TIME_WAIT` has no owner: the kernel drains
 it and there is nothing to kill. portpin says so and exits 2 instead of hunting
 for a process. A port in `CLOSE_WAIT` belongs to a live application that leaked
-the descriptor — that one gets terminated.
+the descriptor - that one gets terminated.
 
 **Graceful first.** `SIGTERM`, then poll, then `SIGKILL`. Your database gets to
 flush.
@@ -82,7 +87,7 @@ portpin -j 8080              # JSON output
   console-wide rather than per-process, and a process started detached or with
   no window has no console to attach to. In that case portpin waits briefly and
   then calls `TerminateProcess`. Win32 offers nothing better.
-- **Linux discovery reads `/proc/net`**, which costs roughly 20-40 ms — the same
+- **Linux discovery reads `/proc/net`**, which costs roughly 20-40 ms - the same
   as `lsof`. A netlink resolver is planned for v0.3.
 - **Process-tree teardown (`--group`) is not in v0.1.** Killing a supervised
   worker still lets its supervisor respawn it. That lands in v0.2 with a guard
@@ -92,6 +97,35 @@ portpin -j 8080              # JSON output
   console detach/reattach the graceful stop needs can send output to the wrong
   place for that run. Both streams together on a terminal, or both piped or
   redirected, are unaffected.
+
+## FAQ
+
+**How do I kill the process on a port on Windows?**
+Run `portpin 8080` (or `portpin 127.0.0.1:8080` for one address). portpin
+finds the owner through the Windows IPHlpAPI tables, sends a console-break for
+a graceful stop, then force-kills if it does not exit in time.
+
+**How do I kill the process on a port on Linux?**
+Same command, `portpin 8080`. portpin reads `/proc/net`, pins the process
+with a `pidfd` so it can never signal a reused PID, then sends `SIGTERM`
+before `SIGKILL`.
+
+**portpin says the port is in `TIME_WAIT` and refuses to kill anything. Why?**
+`TIME_WAIT` has no owning process; the kernel is draining the connection on
+its own, and portpin exits 2 instead of guessing at a PID. `CLOSE_WAIT` is a
+live process still holding the socket, and that one gets terminated.
+
+**I get `bind: permission denied` on a port under 1024. Can portpin fix that?**
+Only if another process already holds that port: run `portpin <port>` to
+check and free it. If nothing is listed and the bind still fails, the port
+itself needs admin/root to bind (Linux: `CAP_NET_BIND_SERVICE` or root;
+Windows: Administrator). That is an OS restriction, not something portpin
+changes.
+
+**How is this different from `npx kill-port` or `taskkill /F`?**
+Same goal, stronger guarantee: portpin pins the target by its start time
+before signalling it, so it never kills a different process that reused the
+same PID. See the comparison table above for the full list.
 
 ## License
 
