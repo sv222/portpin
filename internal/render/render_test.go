@@ -99,3 +99,97 @@ func TestJSONShape(t *testing.T) {
 		t.Errorf("endpoint = %v, want 127.0.0.1:8080", first["endpoint"])
 	}
 }
+
+func mdnsBinding(pid uint32, name string) model.Binding {
+	return model.Binding{
+		Endpoint: netip.MustParseAddrPort("0.0.0.0:5353"),
+		Protocol: model.UDP,
+		State:    model.StateListen,
+		Proc:     &model.ProcMeta{PID: pid, Name: name},
+	}
+}
+
+func TestTableCollapsesIndistinguishableRows(t *testing.T) {
+	bs := []model.Binding{
+		mdnsBinding(22392, "vivaldi.exe"),
+		mdnsBinding(22392, "vivaldi.exe"),
+		mdnsBinding(22392, "vivaldi.exe"),
+		mdnsBinding(1376, ""),
+		mdnsBinding(10272, "vivaldi.exe"),
+		mdnsBinding(10272, "vivaldi.exe"),
+	}
+
+	var buf bytes.Buffer
+	if err := Table(&buf, bs); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("want a header plus 3 collapsed rows, got %d lines:\n%s", len(lines), buf.String())
+	}
+	if !strings.Contains(lines[0], "SOCKETS") {
+		t.Errorf("header is missing the SOCKETS column: %q", lines[0])
+	}
+	for i, want := range []struct{ pid, sockets string }{
+		{"22392", "3"}, {"1376", "1"}, {"10272", "2"},
+	} {
+		f := strings.Fields(lines[i+1])
+		if f[3] != want.pid {
+			t.Errorf("row %d pid = %s, want %s (line %q)", i, f[3], want.pid, lines[i+1])
+		}
+		if got := f[len(f)-1]; got != want.sockets {
+			t.Errorf("row %d socket count = %s, want %s (line %q)", i, got, want.sockets, lines[i+1])
+		}
+	}
+}
+
+func TestTableKeepsDistinguishableRowsApart(t *testing.T) {
+	bs := []model.Binding{
+		mdnsBinding(1376, "svchost.exe"),
+		{
+			Endpoint: netip.MustParseAddrPort("[::]:5353"),
+			Protocol: model.UDP,
+			State:    model.StateListen,
+			Proc:     &model.ProcMeta{PID: 1376, Name: "svchost.exe"},
+		},
+		mdnsBinding(22392, "vivaldi.exe"),
+	}
+
+	var buf bytes.Buffer
+	if err := Table(&buf, bs); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("rows differing in endpoint or pid must not collapse, got:\n%s", buf.String())
+	}
+	for _, line := range lines[1:] {
+		f := strings.Fields(line)
+		if got := f[len(f)-1]; got != "1" {
+			t.Errorf("socket count = %s, want 1 for a unique row (line %q)", got, line)
+		}
+	}
+}
+
+func TestJSONKeepsEverySocket(t *testing.T) {
+	bs := []model.Binding{
+		mdnsBinding(22392, "vivaldi.exe"),
+		mdnsBinding(22392, "vivaldi.exe"),
+		mdnsBinding(22392, "vivaldi.exe"),
+	}
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, Report{Target: "5353", Bindings: bs}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Bindings []map[string]any `json:"bindings"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bindings) != len(bs) {
+		t.Fatalf("JSON reported %d bindings, want all %d: the table collapses, the machine format must not",
+			len(got.Bindings), len(bs))
+	}
+}
