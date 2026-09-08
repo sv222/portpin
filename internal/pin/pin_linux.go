@@ -82,7 +82,7 @@ func Pin(meta model.ProcMeta) (Controller, error) {
 	after, err := discover.ReadStartTime(meta.PID)
 	if err != nil {
 		if fd >= 0 {
-			unix.Close(fd)
+			_ = unix.Close(fd)
 		}
 		if os.IsNotExist(err) {
 			return nil, ErrProcessGone
@@ -91,7 +91,7 @@ func Pin(meta model.ProcMeta) (Controller, error) {
 	}
 	if after != before {
 		if fd >= 0 {
-			unix.Close(fd)
+			_ = unix.Close(fd)
 		}
 		return nil, ErrIdentityChanged
 	}

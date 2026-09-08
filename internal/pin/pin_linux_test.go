@@ -53,7 +53,7 @@ func TestPinAndGracefulStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if lc, err := c.Lifecycle(); err != nil || lc != model.Alive {
 		t.Fatalf("Lifecycle() = %v, %v; want alive, nil", lc, err)
@@ -106,7 +106,7 @@ func TestLifecycleDetectsZombie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { c.Close(); _ = cmd.Wait() }()
+	defer func() { _ = c.Close(); _ = cmd.Wait() }()
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -132,7 +132,7 @@ func TestSelfPinIsAlive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if lc, _ := c.Lifecycle(); lc != model.Alive {
 		t.Fatalf("Lifecycle() = %v, want alive", lc)
 	}

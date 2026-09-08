@@ -134,7 +134,7 @@ func TestResolveFindsOwnListener(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	port := uint16(ln.Addr().(*net.TCPAddr).Port)
 	r := New()
@@ -166,7 +166,7 @@ func TestListAllReturnsListeners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	all, err := New().ListAll()
 	if err != nil {

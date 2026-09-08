@@ -45,7 +45,7 @@ func (r *linuxResolver) rows() ([]ProcNetRow, []model.Protocol, error) {
 			return nil, nil, err
 		}
 		parsed, err := ParseProcNet(f, nf.proto, nf.v6)
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			return nil, nil, err
 		}
