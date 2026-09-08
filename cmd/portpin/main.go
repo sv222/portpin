@@ -165,6 +165,12 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 			return exitTimeWait
 		}
 		report.ExitCode = exitPermission
+		if os.Getenv("PORTPIN_DEBUG_DISCOVER") != "" {
+			for _, b := range bindings {
+				fmt.Fprintf(os.Stderr, "DEBUG unresolved binding: endpoint=%s state=%v inode=%d proc=%v\n",
+					b.Endpoint, b.State, b.Inode, b.Proc)
+			}
+		}
 		emit(f, report, permissionMessage())
 		return exitPermission
 	}

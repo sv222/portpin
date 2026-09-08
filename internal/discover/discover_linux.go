@@ -174,9 +174,16 @@ func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error
 		if err != nil {
 			return nil, err
 		}
+		debug := os.Getenv("PORTPIN_DEBUG_DISCOVER") != ""
 		for inode := range want {
-			if _, ok := owner[inode]; !ok && !live[inode] {
-				vanished[inode] = true
+			if _, ok := owner[inode]; !ok {
+				if debug {
+					fmt.Fprintf(os.Stderr, "DEBUG attachOwners: inode=%d unmatched, live=%v (live set size=%d)\n",
+						inode, live[inode], len(live))
+				}
+				if !live[inode] {
+					vanished[inode] = true
+				}
 			}
 		}
 	}
