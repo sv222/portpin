@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The human table prints rows that would look identical once, and a new
+  `SOCKETS` column counts how many sockets stand behind each one. A process
+  can legitimately hold several distinct sockets on one endpoint - the
+  `SO_REUSEADDR` mDNS listeners that open one socket per interface are the
+  common case - and the table's columns cannot tell those sockets apart, so
+  `portpin --protocol udp 5353` used to repeat the same row many times. The
+  JSON `bindings` array is unaffected and still lists every socket.
 - The JSON `actions` array now carries one entry per process rather than one
   per socket. The kernel socket tables list a row per socket, so a process
   holding several `SO_REUSEADDR` sockets on one endpoint - the usual shape of
