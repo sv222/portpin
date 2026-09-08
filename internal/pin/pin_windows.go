@@ -87,11 +87,11 @@ func Pin(meta model.ProcMeta) (Controller, error) {
 
 	ct, err := creationTime(h)
 	if err != nil {
-		windows.CloseHandle(h)
+		_ = windows.CloseHandle(h)
 		return nil, err
 	}
 	if meta.StartTime != 0 && ct != meta.StartTime {
-		windows.CloseHandle(h)
+		_ = windows.CloseHandle(h)
 		return nil, ErrIdentityChanged
 	}
 

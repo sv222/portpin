@@ -12,7 +12,7 @@ func TestParseProcNetTCP4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	rows, err := ParseProcNet(f, model.TCP, false)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestParseProcNetTCP6(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	rows, err := ParseProcNet(f, model.TCP, true)
 	if err != nil {
@@ -76,7 +76,7 @@ func TestParseProcNetUDPStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	rows, err := ParseProcNet(f, model.UDP, false)
 	if err != nil {

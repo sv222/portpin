@@ -372,7 +372,7 @@ func killOne(r discover.Resolver, filter model.Filter, b model.Binding, opts ter
 		}
 		return res
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	pid := b.Proc.PID
 	endpoint := b.Endpoint

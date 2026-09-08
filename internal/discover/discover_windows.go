@@ -176,7 +176,7 @@ func readProcMeta(pid uint32) *model.ProcMeta {
 	if err != nil {
 		return m // another user's process, or a protected one
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }()
 
 	var name [windows.MAX_LONG_PATH]uint16
 	size := uint32(len(name))
@@ -197,7 +197,7 @@ func ReadCreationTime(pid uint32) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }()
 	return creationTimeOfHandle(h)
 }
 

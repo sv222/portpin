@@ -38,7 +38,7 @@ func TestPinAndHardKill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if lc, err := c.Lifecycle(); err != nil || lc != model.Alive {
 		t.Fatalf("Lifecycle() = %v, %v; want alive, nil", lc, err)
@@ -74,7 +74,7 @@ func TestGracefulReportsNoConsoleOrSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	// Either outcome is correct and both must be handled by the state machine:
 	// a console was attachable and the break was sent, or there was none.
@@ -89,7 +89,7 @@ func TestLifecycleReportsGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
@@ -133,7 +133,7 @@ func TestGracefulDoesNotSelfTerminate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Graceful(); err != nil {
 		t.Fatalf("Graceful() = %v, want nil (target has its own console, so AttachConsole must succeed)", err)
@@ -164,7 +164,7 @@ func TestGracefulSetsConsoleDetachedFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Graceful(); err != nil && err != ErrNoConsole {
 		t.Fatalf("Graceful() = %v, want nil or ErrNoConsole", err)
@@ -191,7 +191,7 @@ func TestSelfPinIsAlive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if lc, _ := c.Lifecycle(); lc != model.Alive {
 		t.Fatalf("Lifecycle() = %v, want alive", lc)
 	}
