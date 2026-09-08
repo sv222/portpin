@@ -182,7 +182,7 @@ that on trust: every release ships a `checksums.txt`, so check that what you
 downloaded is byte-for-byte what CI published.
 
 ```
-certutil -hash-file portpin_0.1.0_windows_amd64.zip SHA256
+certutil -hash-file portpin_<version>_windows_amd64.zip SHA256
 ```
 
 Compare the output to the matching line in `checksums.txt`. If it matches, a
