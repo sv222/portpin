@@ -169,10 +169,14 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 		return exitPermission
 	}
 
+	// One socket per row: a process holding several sockets on the endpoint
+	// must still be pinned, warned about and terminated exactly once.
+	targets := uniqueProcesses(owned)
+
 	// Confirmation and advisories: several owners, or a container-proxy warning.
-	advisories := make(map[uint32]*advise.Advisory, len(owned))
-	needConfirm := len(owned) > 1
-	for _, b := range owned {
+	advisories := make(map[uint32]*advise.Advisory, len(targets))
+	needConfirm := len(targets) > 1
+	for _, b := range targets {
 		if a := advise.ForProcess(*b.Proc); a != nil {
 			advisories[b.Proc.PID] = a
 			needConfirm = true
@@ -181,13 +185,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 
 	if f.dryRun {
 		report.ExitCode = exitOK
-		for _, b := range owned {
-			report.Actions = append(report.Actions, render.Action{
-				PID:      b.Proc.PID,
-				Outcome:  "dry-run",
-				Advisory: advisories[b.Proc.PID],
-			})
-		}
+		report.Actions = dryRunActions(targets, advisories)
 		if !f.jsonOut {
 			_ = render.Table(os.Stdout, bindings)
 			for _, act := range report.Actions {
@@ -226,7 +224,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	defer guard.finish()
 
 	worst := exitOK
-	for _, b := range owned {
+	for _, b := range targets {
 		res := killOne(resolver, filter, b, opts)
 		act := render.Action{
 			PID:          res.PID,
@@ -402,6 +400,39 @@ func ownedBindings(bs []model.Binding) []model.Binding {
 	return out
 }
 
+// uniqueProcesses keeps one binding per distinct owning PID, in first-seen
+// order. The socket tables list a row per socket, so a process holding
+// several SO_REUSEADDR sockets on one endpoint appears many times; portpin
+// terminates processes, not sockets, so it must act on each owner once.
+func uniqueProcesses(bs []model.Binding) []model.Binding {
+	seen := make(map[uint32]bool, len(bs))
+	var out []model.Binding
+	for _, b := range bs {
+		if b.Proc == nil || seen[b.Proc.PID] {
+			continue
+		}
+		seen[b.Proc.PID] = true
+		out = append(out, b)
+	}
+	return out
+}
+
+func dryRunActions(targets []model.Binding, advisories map[uint32]*advise.Advisory) []render.Action {
+	actions := make([]render.Action, 0, len(targets))
+	for _, b := range targets {
+		actions = append(actions, render.Action{
+			PID:      b.Proc.PID,
+			Outcome:  "dry-run",
+			Advisory: advisories[b.Proc.PID],
+		})
+	}
+	return actions
+}
+
+func confirmPrompt(bs []model.Binding) string {
+	return fmt.Sprintf("terminate %d process(es)? [y/N] ", len(uniqueProcesses(bs)))
+}
+
 func allTimeWait(bs []model.Binding) bool {
 	for _, b := range bs {
 		if b.State != model.StateTimeWait {
@@ -469,6 +500,7 @@ func printOutcome(b model.Binding, res terminate.Result, adv *advise.Advisory) {
 
 // confirm prompts before acting on several processes at once, or on a
 // container proxy. It refuses rather than hangs when stdin is not a terminal.
+// The table lists every socket; the prompt counts the processes behind them.
 func confirm(bs []model.Binding, advisories map[uint32]*advise.Advisory) bool {
 	_ = render.Table(os.Stderr, bs)
 	for _, a := range advisories {
@@ -480,7 +512,7 @@ func confirm(bs []model.Binding, advisories map[uint32]*advise.Advisory) bool {
 		return false
 	}
 
-	fmt.Fprintf(os.Stderr, "terminate %d process(es)? [y/N] ", len(bs))
+	fmt.Fprint(os.Stderr, confirmPrompt(bs))
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
 		return false

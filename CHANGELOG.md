@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The JSON `actions` array now carries one entry per process rather than one
+  per socket. The kernel socket tables list a row per socket, so a process
+  holding several `SO_REUSEADDR` sockets on one endpoint - the usual shape of
+  mDNS on `udp/5353` - was reported once per socket:
+  `portpin --dry-run --protocol udp 5353 --json` emitted 20 actions for 3
+  processes, each with the same PID and the same outcome. `bindings` is
+  unchanged and still lists every socket.
+
+### Fixed
+- The confirmation prompt counted sockets instead of processes, asking
+  "terminate 20 process(es)?" when only 3 processes held those sockets.
+- portpin no longer prompts for confirmation when a single process holds
+  more than one socket on the target endpoint. There is still only one
+  process to stop, so the multiple-owner prompt did not apply.
+
 ## [0.1.1] - 2026-09-09
 
 The binary is unchanged: this release is documentation and build plumbing only.
