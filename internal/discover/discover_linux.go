@@ -108,6 +108,17 @@ func (r *linuxResolver) ListAll() ([]model.Binding, error) {
 // the inodes of interest, then loads metadata for the PIDs that matched.
 // Bindings with inode 0 (TIME_WAIT and other kernel-owned sockets) keep a nil
 // Proc, which is the signal the CLI uses to report exit code 2.
+//
+// An inode that stays unmatched after the walk is ambiguous: its owner may
+// genuinely be invisible to this user (permission denied), or the owning
+// process may have exited between the /proc/net/* read that produced bs and
+// this /proc/<pid>/fd walk - a benign race, not a permission problem, and
+// the two must not be reported the same way. liveInodes below tells them
+// apart: a closed socket's inode is simply gone from a fresh read, since
+// Linux releases a process's sockets synchronously on exit, well before the
+// process is reaped. A binding whose inode turns out to already be gone is
+// dropped rather than kept with a nil Proc, so it falls through to the same
+// "already free" handling as if it had never been a candidate.
 func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error) {
 	want := make(map[uint64]int, len(bs))
 	for i, b := range bs {
@@ -150,20 +161,61 @@ func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error
 		}
 	}
 
-	metaCache := make(map[uint32]*model.ProcMeta)
-	for inode, idx := range want {
-		pid, ok := owner[inode]
-		if !ok {
-			continue // owner not visible to this user
+	vanished := make(map[uint64]bool)
+	needsLiveCheck := false
+	for inode := range want {
+		if _, ok := owner[inode]; !ok {
+			needsLiveCheck = true
+			break
 		}
-		meta, ok := metaCache[pid]
-		if !ok {
-			meta = readProcMeta(r.root, pid) // never nil
-			metaCache[pid] = meta
-		}
-		bs[idx].Proc = meta
 	}
-	return bs, nil
+	if needsLiveCheck {
+		live, err := r.liveInodes()
+		if err != nil {
+			return nil, err
+		}
+		for inode := range want {
+			if _, ok := owner[inode]; !ok && !live[inode] {
+				vanished[inode] = true
+			}
+		}
+	}
+
+	metaCache := make(map[uint32]*model.ProcMeta)
+	out := make([]model.Binding, 0, len(bs))
+	for i, b := range bs {
+		if vanished[b.Inode] {
+			continue // socket closed mid-scan; no longer a live candidate
+		}
+		if pid, ok := owner[b.Inode]; ok {
+			meta, ok := metaCache[pid]
+			if !ok {
+				meta = readProcMeta(r.root, pid) // never nil
+				metaCache[pid] = meta
+			}
+			bs[i].Proc = meta
+		}
+		out = append(out, bs[i])
+	}
+	return out, nil
+}
+
+// liveInodes re-reads the socket tables and returns the set of inodes
+// currently present. Used by attachOwners to tell a genuinely
+// permission-denied owner apart from one whose socket already closed during
+// the /proc/<pid>/fd walk above.
+func (r *linuxResolver) liveInodes() (map[uint64]bool, error) {
+	rows, _, err := r.rows()
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[uint64]bool, len(rows))
+	for _, row := range rows {
+		if row.Inode != 0 {
+			live[row.Inode] = true
+		}
+	}
+	return live, nil
 }
 
 // socketInode extracts N from a "socket:[N]" fd symlink target.
