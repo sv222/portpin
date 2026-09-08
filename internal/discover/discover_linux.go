@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sv222/portpin/internal/model"
 )
@@ -104,20 +105,33 @@ func (r *linuxResolver) ListAll() ([]model.Binding, error) {
 	return r.attachOwners(candidates)
 }
 
-// attachOwners walks /proc once, building an inode -> PID index for exactly
-// the inodes of interest, then loads metadata for the PIDs that matched.
-// Bindings with inode 0 (TIME_WAIT and other kernel-owned sockets) keep a nil
-// Proc, which is the signal the CLI uses to report exit code 2.
+// attachOwnersRetries bounds how many times attachOwners re-walks /proc for
+// an inode whose owner it could not find on the first pass but which is
+// still live. A dying process can drop out of its own fd-table walk (see
+// scanOwners) a little before its socket leaves the socket tables - two
+// separate kernel subsystems, torn down independently, not atomically - so
+// a single snapshot cannot always tell that apart from a real permission
+// barrier. A real barrier does not change between attempts; this kind of
+// exit race does, usually inside the first retry.
+const attachOwnersRetries = 5
+
+var attachOwnersRetryDelay = 2 * time.Millisecond
+
+// attachOwners builds an inode -> PID index for exactly the inodes of
+// interest, then loads metadata for the PIDs that matched. Bindings with
+// inode 0 (TIME_WAIT and other kernel-owned sockets) keep a nil Proc, which
+// is the signal the CLI uses to report exit code 2.
 //
-// An inode that stays unmatched after the walk is ambiguous: its owner may
+// An inode that stays unmatched after scanOwners is ambiguous: its owner may
 // genuinely be invisible to this user (permission denied), or the owning
-// process may have exited between the /proc/net/* read that produced bs and
-// this /proc/<pid>/fd walk - a benign race, not a permission problem, and
-// the two must not be reported the same way. liveInodes below tells them
-// apart: a closed socket's inode is simply gone from a fresh read, since
-// Linux releases a process's sockets synchronously on exit, well before the
-// process is reaped. A binding whose inode turns out to already be gone is
-// dropped rather than kept with a nil Proc, so it falls through to the same
+// process may be mid-exit - a benign race, not a permission problem, and the
+// two must not be reported the same way. A bounded retry resolves the exit
+// race in practice (see attachOwnersRetries); liveInodes then tells apart
+// whatever is still unmatched after retries are exhausted: a closed
+// socket's inode is gone from a fresh read, since Linux releases a
+// process's sockets synchronously on exit, well before the process is
+// reaped. A binding whose inode turns out to already be gone is dropped
+// rather than kept with a nil Proc, so it falls through to the same
 // "already free" handling as if it had never been a candidate.
 func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error) {
 	want := make(map[uint64]int, len(bs))
@@ -130,6 +144,73 @@ func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error
 		return bs, nil
 	}
 
+	owner, err := r.scanOwners(want)
+	if err != nil {
+		return nil, err
+	}
+
+	debug := os.Getenv("PORTPIN_DEBUG_DISCOVER") != ""
+	attempt := 0
+	for ; attempt < attachOwnersRetries && len(owner) < len(want); attempt++ {
+		remaining := make(map[uint64]int, len(want)-len(owner))
+		for inode, idx := range want {
+			if _, ok := owner[inode]; !ok {
+				remaining[inode] = idx
+			}
+		}
+		time.Sleep(attachOwnersRetryDelay)
+		found, err := r.scanOwners(remaining)
+		if err != nil {
+			return nil, err
+		}
+		for inode, pid := range found {
+			owner[inode] = pid
+			if debug {
+				fmt.Fprintf(os.Stderr, "DEBUG attachOwners: inode=%d found on retry %d, pid=%d\n", inode, attempt+1, pid)
+			}
+		}
+	}
+
+	vanished := make(map[uint64]bool)
+	if len(owner) < len(want) {
+		live, err := r.liveInodes()
+		if err != nil {
+			return nil, err
+		}
+		for inode := range want {
+			if _, ok := owner[inode]; !ok {
+				if debug {
+					fmt.Fprintf(os.Stderr, "DEBUG attachOwners: inode=%d still unmatched after %d retries, live=%v\n", inode, attempt, live[inode])
+				}
+				if !live[inode] {
+					vanished[inode] = true
+				}
+			}
+		}
+	}
+
+	metaCache := make(map[uint32]*model.ProcMeta)
+	out := make([]model.Binding, 0, len(bs))
+	for i, b := range bs {
+		if vanished[b.Inode] {
+			continue // socket closed mid-scan; no longer a live candidate
+		}
+		if pid, ok := owner[b.Inode]; ok {
+			meta, ok := metaCache[pid]
+			if !ok {
+				meta = readProcMeta(r.root, pid) // never nil
+				metaCache[pid] = meta
+			}
+			bs[i].Proc = meta
+		}
+		out = append(out, bs[i])
+	}
+	return out, nil
+}
+
+// scanOwners walks /proc once, returning the subset of want's inodes it
+// found an owning PID for.
+func (r *linuxResolver) scanOwners(want map[uint64]int) (map[uint64]uint32, error) {
 	owner := make(map[uint64]uint32, len(want))
 	entries, err := os.ReadDir(r.root)
 	if err != nil {
@@ -160,57 +241,12 @@ func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error
 			}
 		}
 	}
-
-	vanished := make(map[uint64]bool)
-	needsLiveCheck := false
-	for inode := range want {
-		if _, ok := owner[inode]; !ok {
-			needsLiveCheck = true
-			break
-		}
-	}
-	if needsLiveCheck {
-		live, err := r.liveInodes()
-		if err != nil {
-			return nil, err
-		}
-		debug := os.Getenv("PORTPIN_DEBUG_DISCOVER") != ""
-		for inode := range want {
-			if _, ok := owner[inode]; !ok {
-				if debug {
-					fmt.Fprintf(os.Stderr, "DEBUG attachOwners: inode=%d unmatched, live=%v (live set size=%d)\n",
-						inode, live[inode], len(live))
-				}
-				if !live[inode] {
-					vanished[inode] = true
-				}
-			}
-		}
-	}
-
-	metaCache := make(map[uint32]*model.ProcMeta)
-	out := make([]model.Binding, 0, len(bs))
-	for i, b := range bs {
-		if vanished[b.Inode] {
-			continue // socket closed mid-scan; no longer a live candidate
-		}
-		if pid, ok := owner[b.Inode]; ok {
-			meta, ok := metaCache[pid]
-			if !ok {
-				meta = readProcMeta(r.root, pid) // never nil
-				metaCache[pid] = meta
-			}
-			bs[i].Proc = meta
-		}
-		out = append(out, bs[i])
-	}
-	return out, nil
+	return owner, nil
 }
 
 // liveInodes re-reads the socket tables and returns the set of inodes
 // currently present. Used by attachOwners to tell a genuinely
-// permission-denied owner apart from one whose socket already closed during
-// the /proc/<pid>/fd walk above.
+// permission-denied owner apart from one whose socket already closed.
 func (r *linuxResolver) liveInodes() (map[uint64]bool, error) {
 	rows, _, err := r.rows()
 	if err != nil {
