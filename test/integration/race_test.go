@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -76,7 +75,6 @@ func TestRepeatedSpawnKillNeverMisfires(t *testing.T) {
 		}(l.Cmd)
 
 		cmd := exec.Command(bin, "-y", "-t", "500", addr)
-		cmd.Env = append(os.Environ(), "PORTPIN_DEBUG_DISCOVER=1") // TEMP: see the commit removing this
 		out, err := cmd.CombinedOutput()
 		code := 0
 		if ee, ok := err.(*exec.ExitError); ok {

@@ -149,9 +149,7 @@ func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error
 		return nil, err
 	}
 
-	debug := os.Getenv("PORTPIN_DEBUG_DISCOVER") != ""
-	attempt := 0
-	for ; attempt < attachOwnersRetries && len(owner) < len(want); attempt++ {
+	for attempt := 0; attempt < attachOwnersRetries && len(owner) < len(want); attempt++ {
 		remaining := make(map[uint64]int, len(want)-len(owner))
 		for inode, idx := range want {
 			if _, ok := owner[inode]; !ok {
@@ -165,9 +163,6 @@ func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error
 		}
 		for inode, pid := range found {
 			owner[inode] = pid
-			if debug {
-				fmt.Fprintf(os.Stderr, "DEBUG attachOwners: inode=%d found on retry %d, pid=%d\n", inode, attempt+1, pid)
-			}
 		}
 	}
 
@@ -178,13 +173,8 @@ func (r *linuxResolver) attachOwners(bs []model.Binding) ([]model.Binding, error
 			return nil, err
 		}
 		for inode := range want {
-			if _, ok := owner[inode]; !ok {
-				if debug {
-					fmt.Fprintf(os.Stderr, "DEBUG attachOwners: inode=%d still unmatched after %d retries, live=%v\n", inode, attempt, live[inode])
-				}
-				if !live[inode] {
-					vanished[inode] = true
-				}
+			if _, ok := owner[inode]; !ok && !live[inode] {
+				vanished[inode] = true
 			}
 		}
 	}
