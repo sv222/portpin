@@ -93,8 +93,13 @@ func TestJSONOutputIsValid(t *testing.T) {
 	if doc.ExitCode != 0 {
 		t.Errorf("exit_code = %d, want 0", doc.ExitCode)
 	}
-	if len(doc.Actions) != 1 || doc.Actions[0].Outcome != "released" {
-		t.Errorf("actions = %+v, want one released action", doc.Actions)
+	// "zombie" is as valid a single-action outcome as "released": the
+	// endpoint was freed either way, the process just has not been reaped by
+	// its parent yet. cmd/portpin treats both as exit 0 for the same
+	// reason (see exitCodeFor), and internal/pin's own Linux tests cover the
+	// zombie detection this depends on.
+	if len(doc.Actions) != 1 || (doc.Actions[0].Outcome != "released" && doc.Actions[0].Outcome != "zombie") {
+		t.Errorf("actions = %+v, want one released (or zombie) action", doc.Actions)
 	}
 }
 
