@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Find and kill the process holding a TCP or UDP port, on Windows and Linux.
-Release a port without losing your data.
+Clears `address already in use` without losing your data.
 
 `lsof -ti :8080 | xargs kill -9` works until it doesn't. When it doesn't, it
 corrupts an embedded database, kills your shell, or signals a PID that already
@@ -49,11 +49,12 @@ go install github.com/sv222/portpin/cmd/portpin@latest
 ## Usage
 
 ```
-portpin 8080                 # any address on port 8080
+portpin 3000                 # any address on port 3000
 portpin 127.0.0.1:8080       # only loopback
 portpin '[::1]:8080'         # only IPv6 loopback
+portpin --protocol udp 5353  # UDP instead of TCP
 portpin list                 # every listener on the machine
-portpin --dry-run 8080       # look, change nothing
+portpin --dry-run 5432       # look, change nothing
 portpin -j 8080              # JSON output
 ```
 
@@ -66,6 +67,39 @@ portpin -j 8080              # JSON output
 | `-t, --timeout` | graceful budget in ms (default 3000) |
 | `-y, --yes` | no prompts |
 | `-j, --json` | machine-readable output |
+
+## Common cases
+
+The error you actually got, and the command that clears it.
+
+| The error | Where it comes from | Fix |
+|---|---|---|
+| `EADDRINUSE: address already in use :::3000` | Node, `npm run dev`, Next.js, Vite | `portpin 3000` |
+| `OSError: [Errno 98] Address already in use` | Python, Django, Flask, uvicorn | `portpin 8000` |
+| `listen tcp :8080: bind: address already in use` | Go, nginx, Caddy | `portpin 8080` |
+| `Only one usage of each socket address is normally permitted` | Windows, the same condition worded differently | `portpin 8080` |
+| `Bind for 0.0.0.0:8080 failed: port is already allocated` | Docker, Podman | `portpin --dry-run 8080`, then read the FAQ |
+| `address already in use` on a port you closed seconds ago | `TIME_WAIT`, so there is nothing to kill | `portpin 8080` says so and exits 2 |
+
+Every one of those is the same kernel condition, `EADDRINUSE`, worded by
+whichever runtime you happened to be using. When you are not certain what you
+are about to stop, run `--dry-run` first.
+
+## Coming from netstat, lsof or fuser
+
+| What you type today | With portpin |
+|---|---|
+| `netstat -ano \| findstr :8080`, then `taskkill /F /PID <pid>` | `portpin 8080` |
+| `lsof -ti :8080 \| xargs kill -9` | `portpin 8080` |
+| `fuser -k 8080/tcp` | `portpin 8080` |
+| `ss -ltnp \| grep :8080` | `portpin --dry-run 8080` |
+| `Get-NetTCPConnection -LocalPort 8080`, then `Stop-Process` | `portpin 8080` |
+| `npx kill-port 3000` | `portpin 3000` |
+
+Every recipe on the left shares the same two gaps: it hands a bare PID to a
+kill command, and it cannot tell `127.0.0.1:8080` from `0.0.0.0:8080`. portpin
+pins the process identity before it signals anything, and it takes an address
+rather than only a port.
 
 ## Exit codes
 
@@ -121,6 +155,18 @@ check and free it. If nothing is listed and the bind still fails, the port
 itself needs admin/root to bind (Linux: `CAP_NET_BIND_SERVICE` or root;
 Windows: Administrator). That is an OS restriction, not something portpin
 changes.
+
+**Docker says `port is already allocated`. Can portpin fix it?**
+It shows you what actually holds the port, which is usually a forwarder
+between host and container (`docker-proxy`, `rootlessport`, `slirp4netns`,
+`com.docker.backend`, `wslhost.exe`) rather than your own program. portpin
+recognises all of those and refuses to kill one without an explicit
+confirmation, because cutting the forwarder leaves the container running and
+the daemon puts the port straight back. It prints the forwarding it found
+(`:8080 -> 172.17.0.2:80`) and points you at `docker stop <container>`
+instead. Start with `portpin --dry-run 8080` to see the owner. None of this
+opens the Docker socket, which matters when the reason you are chasing a port
+is that the daemon itself is hung.
 
 **How is this different from `npx kill-port` or `taskkill /F`?**
 Same goal, stronger guarantee: portpin pins the target by its start time
