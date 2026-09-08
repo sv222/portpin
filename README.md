@@ -127,6 +127,25 @@ Same goal, stronger guarantee: portpin pins the target by its start time
 before signalling it, so it never kills a different process that reused the
 same PID. See the comparison table above for the full list.
 
+**Windows Defender flagged `portpin.exe` as a threat. Is it malware?**
+No, and there is no code-signing certificate behind these builds to convince
+Defender otherwise. portpin is an unsigned binary whose entire job is opening
+process handles and terminating processes, which is what the heuristics score
+as suspicious - the same false positive hits most unsigned Go CLIs. Don't take
+that on trust: every release ships a `checksums.txt`, so check that what you
+downloaded is byte-for-byte what CI published.
+
+```
+certutil -hash-file portpin_0.1.0_windows_amd64.zip SHA256
+```
+
+Compare the output to the matching line in `checksums.txt`. If it matches, a
+quarantined file can be restored from Protection History in Windows Security.
+Building from source with `go install github.com/sv222/portpin/cmd/portpin@latest`
+sidesteps the detection completely. Reporting it through
+[Microsoft's file submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission)
+is the only thing that fixes the signature for everyone else.
+
 ## License
 
 MIT
