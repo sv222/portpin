@@ -87,13 +87,11 @@ func TestTimeWaitExitsTwo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accepted := make(chan net.Conn, 1)
 	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			_ = c.Close()
+		c, err := ln.Accept()
+		if err == nil {
+			accepted <- c
 		}
 	}()
 
@@ -101,10 +99,22 @@ func TestTimeWaitExitsTwo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var server net.Conn
+	select {
+	case server = <-accepted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server never accepted the connection")
+	}
+
 	local := client.LocalAddr().String()
-	// Closing the active side first leaves the CLIENT in TIME_WAIT, so the
-	// client's local port is the endpoint to interrogate.
+	// Whichever side sends FIN first becomes the active closer and is the
+	// one that lands in TIME_WAIT; the other side goes to CLOSE_WAIT then
+	// CLOSED, never TIME_WAIT. The client must close first, so the server
+	// side is only closed here, sequentially, after client.Close() - never
+	// from a concurrent goroutine, which could otherwise win that race and
+	// put the server, not the client, into TIME_WAIT.
 	_ = client.Close()
+	_ = server.Close()
 	_ = ln.Close()
 
 	deadline := time.Now().Add(3 * time.Second)
