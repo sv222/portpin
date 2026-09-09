@@ -15,14 +15,14 @@ import (
 )
 
 // TestRepeatedSpawnKillNeverMisfires hammers the discovery-to-signal window.
-// Every iteration must end in a released port or a clean refusal — never in
+// Every iteration must end in a released port or a clean refusal - never in
 // an unrelated process dying, which is asserted by a sentinel process that
 // holds a different port for the whole run.
 //
 // The raced listener is a real child process (testutil.StartListener), not an
 // in-process net.Listen: once the timing below actually lets portpin catch
 // the listener while it is still open, portpin's Graceful() stage sends a
-// real termination signal to whatever PID it discovered — an in-process
+// real termination signal to whatever PID it discovered. An in-process
 // listener would make that PID the test binary's own, which is exactly the
 // self-kill hazard testutil.StartListener's own doc comment describes.
 func TestRepeatedSpawnKillNeverMisfires(t *testing.T) {
@@ -136,7 +136,7 @@ func measureBaseline(t *testing.T, bin string) time.Duration {
 }
 
 // measureFreeBaseline times one full, un-raced portpin run against a port
-// that is already free — i.e. just discovery, with no graceful/hard-kill
+// that is already free - i.e. just discovery, with no graceful/hard-kill
 // stage at all. This is the number the per-iteration delay window is sized
 // around (see window's doc comment above): it approximates how long portpin
 // takes to REACH discovery, which is what the race actually needs to

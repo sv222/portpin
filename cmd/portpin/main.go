@@ -216,7 +216,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	// os.Stdout/os.Stderr handles (see internal/pin). guard buffers every
 	// write those two files would otherwise perform for the rest of this
 	// function and replays it through a freshly restored console once the
-	// whole kill loop — every possible Graceful() call — has finished. It is
+	// whole kill loop - every possible Graceful() call - has finished. It is
 	// a no-op whenever os.Stdout is not an interactive console (the existing
 	// pipe-based test harness included) or on platforms where Graceful can
 	// never touch a console at all.
@@ -311,11 +311,11 @@ func beginConsoleOutputWorkaround() *consoleOutputWorkaround {
 // buffered during the guarded span. If Graceful ever actually detached this
 // process's console, it re-establishes one first (see pin.RestoreConsole)
 // and writes through a fresh handle to it rather than through os.Stdout,
-// whose cached handle stays invalid even after reattaching. Otherwise — the
+// whose cached handle stays invalid even after reattaching. Otherwise - the
 // console was never touched, which only happens when every kill in this run
 // used --force (Graceful is never called at all, ErrNoConsole included,
 // since that still frees the console first before reporting no target to
-// attach to) — the buffered output is written to the real, still-valid
+// attach to) - the buffered output is written to the real, still-valid
 // os.Stdout/os.Stderr with no console dance at all.
 func (g *consoleOutputWorkaround) finish() {
 	if !g.active {

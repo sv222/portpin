@@ -153,7 +153,7 @@ func TestGracefulDoesNotSelfTerminate(t *testing.T) {
 // process's own console on entry (see the doc comment on Graceful), so
 // ConsoleDetached must latch true after any Graceful call, whether or not it
 // went on to find an attachable target console. The flag is monotonic and
-// process-global, so this only asserts the true direction — it never resets,
+// process-global, so this only asserts the true direction. It never resets,
 // and other tests in this file may have already flipped it before this one
 // runs.
 func TestGracefulSetsConsoleDetachedFlag(t *testing.T) {

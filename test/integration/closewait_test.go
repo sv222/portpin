@@ -18,7 +18,7 @@ import (
 
 // TestCloseWaitIsClassifiedAndKilled drives a server into CLOSE_WAIT: the
 // client sends FIN and exits, and the server never closes its descriptor.
-// The socket then belongs to a live, hung process — the case simple tools
+// The socket then belongs to a live, hung process - the case simple tools
 // either miss or hang on.
 func TestCloseWaitIsClassifiedAndKilled(t *testing.T) {
 	port := testutil.FreePort(t)

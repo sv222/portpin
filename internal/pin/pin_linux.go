@@ -25,7 +25,7 @@ func ConsoleDetached() bool { return false }
 func GracefulMayDetachConsole() bool { return false }
 
 // RestoreConsole has no Linux equivalent and is never called here in
-// practice, since GracefulMayDetachConsole is always false — callers gate on
+// practice, since GracefulMayDetachConsole is always false. Callers gate on
 // that before ever reaching this. It exists only so cmd/portpin can call
 // pin.RestoreConsole unconditionally from platform-neutral code.
 func RestoreConsole() (*os.File, error) {
@@ -45,7 +45,7 @@ type linuxController struct {
 //
 // The sandwich: the start time is read, the pidfd is opened, and the start
 // time is read again. If both reads agree and the pidfd is open, the process
-// cannot have exited and had its PID recycled in between — the pidfd holds the
+// cannot have exited and had its PID recycled in between. The pidfd holds the
 // PID reservation from the moment it was opened.
 //
 // On kernels older than 5.3 pidfd_open reports ENOSYS. The controller then

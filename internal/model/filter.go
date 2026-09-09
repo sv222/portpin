@@ -3,7 +3,7 @@ package model
 import "net/netip"
 
 // Filter selects bindings by port, optional bind address, and protocol.
-// A nil IP means "any bind address" — the bare-port form of the CLI target.
+// A nil IP means "any bind address" - the bare-port form of the CLI target.
 type Filter struct {
 	Port     uint16
 	IP       *netip.Addr

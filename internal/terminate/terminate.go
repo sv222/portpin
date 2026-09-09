@@ -158,7 +158,7 @@ func Run(c pin.Controller, probe PortProbe, opts Options) Result {
 		}
 		if released {
 			// Stage 3: a released endpoint plus a zombie process is worth
-			// reporting distinctly — the parent supervisor failed to reap.
+			// reporting distinctly. The parent supervisor failed to reap.
 			if lc, lerr := c.Lifecycle(); lerr == nil && lc == model.Zombie {
 				res.Outcome = OutcomeZombie
 				return res

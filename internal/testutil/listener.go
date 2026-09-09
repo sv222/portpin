@@ -90,7 +90,7 @@ func listenerBinary(t *testing.T) string {
 // gives the child its own console on Windows. Without this, the listener
 // inherits the test runner's console, and portpin's Graceful() stage
 // (AttachConsole + a console-wide CTRL_BREAK) broadcasts back into the test
-// process itself instead of only the target — self-destructively killing the
+// process itself instead of only the target - self-destructively killing the
 // test run on every Windows machine, not just this sandbox. A real target
 // process normally runs in its own terminal/console, so giving the spawned
 // listener its own console here matches that real scenario instead of the

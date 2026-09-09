@@ -36,7 +36,7 @@ const attachParentProcess = 0xFFFFFFFF
 // detaches from a console via freeConsole. Graceful (below) always frees the
 // calling process's own console before it can attach to a target's, which
 // permanently invalidates os.Stdout/os.Stderr's cached console handles even
-// after a later AttachConsole call — Go does not refresh them. cmd/portpin
+// after a later AttachConsole call. Go does not refresh them. cmd/portpin
 // reads this flag after the kill loop to know whether it must restore a
 // console before it can produce any more output; see RestoreConsole.
 var consoleDetached atomic.Bool
@@ -50,7 +50,7 @@ func ConsoleDetached() bool { return consoleDetached.Load() }
 // invalidate the process's own cached stdio console handles as a side
 // effect. True on Windows; the Linux implementation returns false. Callers
 // use this to decide whether buffering output around a kill loop is worth
-// doing at all — on platforms where it is always false, buffering would only
+// doing at all. On platforms where it is always false, buffering would only
 // add needless latency to otherwise-unaffected output.
 func GracefulMayDetachConsole() bool { return true }
 
@@ -134,7 +134,7 @@ func freeConsole() error {
 }
 
 // RestoreConsole re-attaches the calling process to the console it was
-// originally launched under (its parent's, via ATTACH_PARENT_PROCESS — the
+// originally launched under (its parent's, via ATTACH_PARENT_PROCESS - the
 // standard Win32 pattern, and correct here because a process not started
 // with its own dedicated console shares its parent's for as long as the
 // parent keeps running, so the parent's console is the same one this process
