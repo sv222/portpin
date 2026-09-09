@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-09
+
+Worth upgrading if you use `--protocol udp` or the JSON output: both reported
+the same process once per socket.
+
 ### Changed
 - The human table prints rows that would look identical once, and a new
   `SOCKETS` column counts how many sockets stand behind each one. A process
@@ -71,6 +76,7 @@ If v0.1.0 works for you, there is no fix here to upgrade for.
 - The Windows graceful-stop signal could be silently missed on some processes, due to a timing race with console event delivery.
 - Various fixes from final review: `TIME_WAIT` / permission-denied reporting, `IPHlpAPI` lookup errors on Windows, container-proxy advisory visibility, and `--force` combined with confirmation prompts.
 
-[Unreleased]: https://github.com/sv222/portpin/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/sv222/portpin/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/sv222/portpin/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/sv222/portpin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/sv222/portpin/releases/tag/v0.1.0
