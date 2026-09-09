@@ -16,7 +16,7 @@ func TestTableRendersColumns(t *testing.T) {
 			Endpoint: netip.MustParseAddrPort("127.0.0.1:8080"),
 			Protocol: model.TCP,
 			State:    model.StateListen,
-			Proc:     &model.ProcMeta{PID: 4242, Name: "node", User: "stani"},
+			Proc:     &model.ProcMeta{PID: 4242, Name: "node", User: "alice"},
 		},
 		{
 			Endpoint: netip.MustParseAddrPort("0.0.0.0:7070"),
@@ -36,7 +36,7 @@ func TestTableRendersColumns(t *testing.T) {
 			t.Errorf("header %q missing from:\n%s", want, out)
 		}
 	}
-	for _, want := range []string{"127.0.0.1:8080", "LISTEN", "4242", "node", "stani"} {
+	for _, want := range []string{"127.0.0.1:8080", "LISTEN", "4242", "node", "alice"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("value %q missing from:\n%s", want, out)
 		}
