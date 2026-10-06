@@ -1,5 +1,9 @@
 # PortPin
 
+<p align="center">
+  <img src="docs/logo.png" alt="PortPin logo" width="200">
+</p>
+
 [![CI](https://github.com/sv222/portpin/actions/workflows/ci.yml/badge.svg)](https://github.com/sv222/portpin/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/sv222/portpin.svg)](https://pkg.go.dev/github.com/sv222/portpin)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
