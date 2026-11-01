@@ -109,10 +109,10 @@ func TestJSONOutputIsValid(t *testing.T) {
 func TestMultiInterfaceDisambiguation(t *testing.T) {
 	port := testutil.FreePort(t)
 
-	// 127.0.0.2 is bound by default on Linux but not on Windows, so the
-	// second address differs per platform.
+	// 127.0.0.2 is bound by default on Linux but not on Windows or macOS, so
+	// the second address differs per platform.
 	second := fmt.Sprintf("127.0.0.2:%d", port)
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS != "linux" {
 		second = fmt.Sprintf("0.0.0.0:%d", port)
 	}
 	target := fmt.Sprintf("127.0.0.1:%d", port)
@@ -146,7 +146,7 @@ func TestForceAloneStillPromptsForMultiMatch(t *testing.T) {
 	port := testutil.FreePort(t)
 
 	second := fmt.Sprintf("127.0.0.2:%d", port)
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS != "linux" {
 		second = fmt.Sprintf("0.0.0.0:%d", port)
 	}
 	target := fmt.Sprintf("127.0.0.1:%d", port)
