@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,3 +57,5 @@ jobs:
           GOOS=linux   GOARCH=amd64 go build ./cmd/portpin
           GOOS=linux   GOARCH=arm64 go build ./cmd/portpin
           GOOS=windows GOARCH=amd64 go build ./cmd/portpin
+          GOOS=darwin  GOARCH=amd64 go build ./cmd/portpin
+          GOOS=darwin  GOARCH=arm64 go build ./cmd/portpin
