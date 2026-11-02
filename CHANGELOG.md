@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-03
+
+### Added
+- macOS support, for Intel (`darwin_amd64`) and Apple Silicon (`darwin_arm64`).
+  portpin reads the socket table with `netstat` and finds the owning process
+  with `lsof`, both of which ship with macOS. It still tells `TIME_WAIT` from
+  `CLOSE_WAIT` and reports sockets owned by processes you cannot inspect.
+- PID pinning on macOS: portpin watches the target with a kqueue exit event and
+  checks the process start time again right before every signal. If the PID
+  now belongs to a different process, nothing is signalled and it exits 3.
+- CI runs the unit and integration tests on `macos-latest`, and releases
+  include macOS archives.
+
+### Changed
+- Building from source now needs Go 1.26.
+
 ## [0.1.2] - 2026-09-09
 
 Worth upgrading if you use `--protocol udp` or the JSON output: both reported
@@ -76,7 +92,8 @@ If v0.1.0 works for you, there is no fix here to upgrade for.
 - The Windows graceful-stop signal could be silently missed on some processes, due to a timing race with console event delivery.
 - Various fixes from final review: `TIME_WAIT` / permission-denied reporting, `IPHlpAPI` lookup errors on Windows, container-proxy advisory visibility, and `--force` combined with confirmation prompts.
 
-[Unreleased]: https://github.com/sv222/portpin/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/sv222/portpin/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sv222/portpin/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/sv222/portpin/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/sv222/portpin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/sv222/portpin/releases/tag/v0.1.0
