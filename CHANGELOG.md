@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `-g/--group` stops the whole job behind a port, so a supervisor such as
+  `nodemon`, `air` or `npm run dev` cannot start the worker again. On Linux
+  and macOS that is the target's process group plus its descendants; on
+  Windows it is the process tree up to the nearest interactive shell. Every member is
+  pinned before it is signalled, parents go first, and portpin refuses when
+  the group would include itself or its shell.
+- The JSON report has a published schema, `docs/schema.json`, and the README
+  documents every field.
+- JSON actions carry a `group` array listing the PIDs signalled with
+  `--group`.
+- The JSON report carries an `error` field, with exit code 1, when discovery
+  fails or `--group` is refused. Both used to print only to stderr.
+
+### Changed
+- Linux reads the socket tables over `NETLINK_SOCK_DIAG` instead of parsing
+  `/proc/net`, and falls back to `/proc/net` when netlink is unavailable.
+
 ## [0.2.0] - 2026-11-03
 
 ### Added
