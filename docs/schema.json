@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sv222/portpin/blob/main/docs/schema.json",
+  "title": "portpin JSON report",
+  "type": "object",
+  "required": ["target", "bindings", "actions", "exit_code"],
+  "additionalProperties": false,
+  "properties": {
+    "target": { "type": "string", "description": "The TARGET argument as given, or \"list\"." },
+    "bindings": { "type": "array", "items": { "$ref": "#/$defs/binding" } },
+    "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+    "exit_code": { "type": "integer", "enum": [0, 1, 2, 3, 4, 5] },
+    "error": { "type": "string" }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "required": ["endpoint", "protocol", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": { "type": "string", "examples": ["127.0.0.1:8080", "[::1]:8080"] },
+        "protocol": { "enum": ["tcp", "udp"] },
+        "state": { "enum": ["LISTEN", "ESTABLISHED", "CLOSE_WAIT", "TIME_WAIT", "OTHER"] },
+        "inode": { "type": "integer", "minimum": 1 },
+        "proc": { "$ref": "#/$defs/proc" }
+      }
+    },
+    "proc": {
+      "type": "object",
+      "required": ["pid", "ppid", "uid"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer" },
+        "ppid": { "type": "integer" },
+        "uid": { "type": "integer" },
+        "user": { "type": "string" },
+        "name": { "type": "string" },
+        "cmdline": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["pid", "outcome", "graceful_sent", "hard_kill"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer" },
+        "outcome": {
+          "enum": ["released", "zombie", "timeout", "identity-changed", "permission-denied", "error", "dry-run"]
+        },
+        "graceful_sent": { "type": "boolean" },
+        "hard_kill": { "type": "boolean" },
+        "group": { "type": "array", "items": { "type": "integer" } },
+        "error": { "type": "string" },
+        "advisory": { "$ref": "#/$defs/advisory" }
+      }
+    },
+    "advisory": {
+      "type": "object",
+      "required": ["kind", "lines"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "examples": ["container-proxy"] },
+        "lines": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
