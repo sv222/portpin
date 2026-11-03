@@ -77,7 +77,7 @@ func TestCloseWaitIsClassifiedAndKilled(t *testing.T) {
 // refuses to kill anything.
 func TestTimeWaitExitsTwo(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("tcp_fin_timeout reporting and the TIME_WAIT path are asserted on Linux")
+		t.Skip("the TIME_WAIT path is asserted on Linux and macOS")
 	}
 
 	port := testutil.FreePort(t)
@@ -129,7 +129,7 @@ func TestTimeWaitExitsTwo(t *testing.T) {
 			if !strings.Contains(string(out), "TIME_WAIT") {
 				t.Errorf("exit 2 given but the message does not mention TIME_WAIT:\n%s", out)
 			}
-			if !strings.Contains(string(out), "tcp_fin_timeout") {
+			if runtime.GOOS == "linux" && !strings.Contains(string(out), "tcp_fin_timeout") {
 				t.Errorf("the live tcp_fin_timeout was not reported:\n%s", out)
 			}
 			return
