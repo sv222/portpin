@@ -129,21 +129,42 @@ rather than only a port.
 ## Process groups
 
 `--group` widens the kill from the process that holds the port to the job it
-belongs to:
+belongs to, and only to that job. Run `--dry-run --group` first to see the
+exact list.
 
-- **Linux and macOS:** every process in the target's process group, which is
-  what a shell job such as `npm run dev` is, plus the target's descendants.
-- **Windows:** there are no process groups, so portpin climbs from the target
-  through its parents until it reaches an interactive shell, a terminal, a
-  system process or an ancestor of portpin itself, then takes that whole
-  subtree. A shell that only runs one command, like the `cmd /c` that
-  `npm run` uses, counts as part of the job.
+**What `--group` includes**
+
+- **Linux and macOS:** the target; every other process in the target's
+  process group, except session leaders and processes whose parent is PID 1
+  (daemons); and every descendant of the target.
+- **Windows:** there are no process groups. portpin starts at the target and
+  moves up to a parent only when that parent is `cmd.exe`, `powershell.exe`,
+  `pwsh.exe`, `bash.exe` or `sh.exe` started for one command (`/c`, `-c`,
+  `-Command` or `-File`), a `node.exe` running `npm` or `npx`, or `npm.cmd`.
+  The climb stops at any other parent: an interactive shell, a terminal,
+  `explorer.exe`, a service host, an IDE such as `idea64.exe` or `Code.exe`, or
+  any program that is not on that list. The group is the highest process
+  reached plus all of its descendants, so a port held by `java.exe` under
+  `idea64.exe` gives a group of `java.exe` and its own children.
+
+**What `--group` refuses**
+
+portpin signals nothing and exits 6 when the group would contain:
+
+- PID 1, or any process whose parent is PID 0 (init, kernel processes,
+  `System` on Windows);
+- portpin itself, the shell that started it, or any ancestor of portpin;
+- Linux and macOS only: a target whose process group is led by another
+  process that is a session leader or that PID 1 started. `docker-proxy`
+  shares the group of `dockerd`, and a script shares the group of its shell, so
+  `--group` stops there instead of taking `dockerd` or the shell down. A target
+  that is itself such a leader, for example an `nginx` master, is allowed and
+  brings its own workers.
 
 Members are signalled parents first, so a supervisor is stopped before it can
 start a replacement. Each one is pinned like the target: a member whose PID
 was reused is skipped, never signalled. portpin lists the group and asks for
-confirmation (`-y` skips it), and refuses outright when the group would
-include portpin or the shell that started it. Try `--dry-run --group` first.
+confirmation (`-y` skips it).
 
 ## JSON output
 
@@ -178,10 +199,10 @@ types.
 | `bindings[].state` | `LISTEN`, `ESTABLISHED`, `CLOSE_WAIT`, `TIME_WAIT` or `OTHER` |
 | `bindings[].proc` | the owner; absent for `TIME_WAIT` and for owners you cannot inspect |
 | `actions` | one entry per process acted on; empty for `list` |
-| `actions[].outcome` | `released`, `zombie`, `timeout`, `identity-changed`, `permission-denied`, `error` or `dry-run` |
+| `actions[].outcome` | `released`, `zombie` (port free, process waiting to be reaped; also with `--group`), `timeout`, `identity-changed`, `permission-denied`, `error` or `dry-run` |
 | `actions[].group` | with `--group`, the PIDs signalled, in order |
 | `exit_code` | the process exit code, as below |
-| `error` | set when portpin failed before acting, for example when discovery failed |
+| `error` | set when portpin failed before acting, for example when discovery failed or `--group` was refused |
 
 ## Exit codes
 
@@ -193,6 +214,7 @@ types.
 | 3 | the PID changed identity mid-teardown; nothing was signalled |
 | 4 | timeout: still held after the hard kill |
 | 5 | permission denied |
+| 6 | `--group` refused: the group is not safe to stop, nothing was signalled |
 
 ## Honest limitations
 
@@ -219,9 +241,14 @@ types.
   manager outside the target's group, such as systemd with `Restart=always`
   or a container runtime, starts the worker again. Stop it through that
   manager instead.
-- **On Windows `--group` follows the parent chain**, so a worker whose
-  supervisor already exited, or one started straight from an interactive
-  shell or a service host, has a group of only itself and its descendants.
+- **On Windows `--group` climbs only through one-command shells and
+  `npm`/`npx`**, so a worker under any other supervisor (`nodemon`, an IDE run
+  configuration, a service host), or one whose supervisor already exited, has a
+  group of only itself and its descendants. Stop that supervisor yourself.
+- **On Linux and macOS `--group` will not widen into a daemon.** A target
+  whose process group is led by a session leader or by a process that PID 1
+  started, such as `docker-proxy` under `dockerd`, is refused (exit 6). Stop
+  the daemon through its service manager.
 - **Windows: split stdout/stderr redirection can misroute output.** If stdout is
   a real terminal and stderr alone is redirected to a file (or the reverse), the
   console detach/reattach the graceful stop needs can send output to the wrong

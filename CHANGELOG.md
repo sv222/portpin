@@ -10,10 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `-g/--group` stops the whole job behind a port, so a supervisor such as
   `nodemon`, `air` or `npm run dev` cannot start the worker again. On Linux
-  and macOS that is the target's process group plus its descendants; on
-  Windows it is the process tree up to the nearest interactive shell. Every member is
-  pinned before it is signalled, parents go first, and portpin refuses when
-  the group would include itself or its shell.
+  and macOS that is the target's process group plus its descendants, without
+  session leaders and daemons started by PID 1. On Windows it is the target
+  plus the one-command shells and `npm`/`npx` wrappers above it, and everything
+  below them. Every member is pinned before it is signalled and parents go
+  first.
+- `--group` refuses with the new exit code 6, and signals nothing, when the
+  group would include PID 1, a process with no parent, portpin or the shell that
+  started it, or when a session leader or a daemon started by PID 1 leads the
+  target's process group (`docker-proxy` under `dockerd`).
 - The JSON report has a published schema, `docs/schema.json`, and the README
   documents every field.
 - JSON actions carry a `group` array listing the PIDs signalled with
