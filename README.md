@@ -24,6 +24,7 @@ belongs to something else. portpin is the tool for that case.
 | Tells `TIME_WAIT` from `CLOSE_WAIT` | no | no | no | **yes** |
 | Graceful stop before force | no | no | no | **yes** |
 | Warns about container proxies | no | no | no | **yes** |
+| Stops the supervisor too (`--group`) | no | no | `/T`, children only | **yes** |
 
 **Race-free PID pinning.** On Linux portpin opens a `pidfd`, which reserves the
 PID, and verifies the process start time before and after checking the socket.
@@ -43,6 +44,11 @@ the descriptor - that one gets terminated.
 
 **Graceful first.** `SIGTERM`, then poll, then `SIGKILL`. Your database gets to
 flush.
+
+**Whole groups on request.** Kill a worker under `nodemon`, `air` or
+`npm run dev` and its supervisor starts a new one. `--group` stops the
+supervisor and the worker together, and pins every process before it signals
+it.
 
 ## Install
 
@@ -71,7 +77,9 @@ portpin '[::1]:8080'         # only IPv6 loopback
 portpin --protocol udp 5353  # UDP instead of TCP
 portpin list                 # every listener on the machine
 portpin --dry-run 5432       # look, change nothing
+portpin --group 3000         # also stop the supervisor that would respawn it
 portpin -j 8080              # JSON output
+portpin list -j              # every listener, as JSON
 ```
 
 | Flag | Meaning |
@@ -82,6 +90,7 @@ portpin -j 8080              # JSON output
 | `-d, --dry-run` | inspect only |
 | `-t, --timeout` | graceful budget in ms (default 3000) |
 | `-y, --yes` | no prompts |
+| `-g, --group` | also stop the target's process group and descendants |
 | `-j, --json` | machine-readable output |
 
 ## Common cases
@@ -117,6 +126,63 @@ kill command, and it cannot tell `127.0.0.1:8080` from `0.0.0.0:8080`. portpin
 pins the process identity before it signals anything, and it takes an address
 rather than only a port.
 
+## Process groups
+
+`--group` widens the kill from the process that holds the port to the job it
+belongs to:
+
+- **Linux and macOS:** every process in the target's process group, which is
+  what a shell job such as `npm run dev` is, plus the target's descendants.
+- **Windows:** there are no process groups, so portpin climbs from the target
+  through its parents until it reaches an interactive shell, a terminal, a
+  system process or an ancestor of portpin itself, then takes that whole
+  subtree. A shell that only runs one command, like the `cmd /c` that
+  `npm run` uses, counts as part of the job.
+
+Members are signalled parents first, so a supervisor is stopped before it can
+start a replacement. Each one is pinned like the target: a member whose PID
+was reused is skipped, never signalled. portpin lists the group and asks for
+confirmation (`-y` skips it), and refuses outright when the group would
+include portpin or the shell that started it. Try `--dry-run --group` first.
+
+## JSON output
+
+`-j` prints one JSON object on stdout, for `list` and for a kill alike. The
+schema is in [docs/schema.json](docs/schema.json) (JSON Schema 2020-12).
+Fields may be added in later releases; existing fields keep their names and
+types.
+
+```json
+{
+  "target": "127.0.0.1:3000",
+  "bindings": [
+    {
+      "endpoint": "127.0.0.1:3000",
+      "protocol": "tcp",
+      "state": "LISTEN",
+      "inode": 48213,
+      "proc": { "pid": 4242, "ppid": 4240, "uid": 1000, "user": "alice", "name": "node", "cmdline": ["node", "server.js"] }
+    }
+  ],
+  "actions": [
+    { "pid": 4242, "outcome": "released", "graceful_sent": true, "hard_kill": false, "group": [4240, 4241, 4242] }
+  ],
+  "exit_code": 0
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `target` | the target as given, or `list` |
+| `bindings` | every matching socket, one entry per socket |
+| `bindings[].state` | `LISTEN`, `ESTABLISHED`, `CLOSE_WAIT`, `TIME_WAIT` or `OTHER` |
+| `bindings[].proc` | the owner; absent for `TIME_WAIT` and for owners you cannot inspect |
+| `actions` | one entry per process acted on; empty for `list` |
+| `actions[].outcome` | `released`, `zombie`, `timeout`, `identity-changed`, `permission-denied`, `error` or `dry-run` |
+| `actions[].group` | with `--group`, the PIDs signalled, in order |
+| `exit_code` | the process exit code, as below |
+| `error` | set when portpin failed before acting, for example when discovery failed |
+
 ## Exit codes
 
 | Code | Meaning |
@@ -136,7 +202,7 @@ rather than only a port.
   which leaves only a very short window between the check and the
   signal. That is still far safer than `kill` on a bare PID.
 - **macOS discovery runs `lsof` and `netstat`** from `/usr/sbin`, so it is
-  slower than reading `/proc/net` on Linux. Without `sudo`, `lsof`
+  slower than the netlink query on Linux. Without `sudo`, `lsof`
   only sees your own processes: a port held by another user or by root is
   reported as permission denied (exit 5), not as free.
 - **On macOS the `TIME_WAIT` message does not say how long the drain takes.**
@@ -145,11 +211,17 @@ rather than only a port.
   console-wide rather than per-process, and a process started detached or with
   no window has no console to attach to. In that case portpin waits briefly and
   then calls `TerminateProcess`. Win32 offers nothing better.
-- **Linux discovery reads `/proc/net`**, which costs roughly 20-40 ms - the same
-  as `lsof`. A netlink resolver is planned for v0.3.
-- **Process-tree teardown (`--group`) is not supported yet.** Killing a
-  supervised worker still lets its supervisor respawn it. It is planned, with a
-  guard that refuses to take down your shell.
+- **Linux discovery falls back to `/proc/net`** when the kernel refuses a
+  `NETLINK_SOCK_DIAG` query, for example inside a restrictive seccomp
+  sandbox. The results are the same, only slower. Finding the owning process
+  still walks `/proc/<pid>/fd`.
+- **`--group` cannot outrun a supervisor it does not reach.** A process
+  manager outside the target's group, such as systemd with `Restart=always`
+  or a container runtime, starts the worker again. Stop it through that
+  manager instead.
+- **On Windows `--group` follows the parent chain**, so a worker whose
+  supervisor already exited, or one started straight from an interactive
+  shell or a service host, has a group of only itself and its descendants.
 - **Windows: split stdout/stderr redirection can misroute output.** If stdout is
   a real terminal and stderr alone is redirected to a file (or the reverse), the
   console detach/reattach the graceful stop needs can send output to the wrong
@@ -164,8 +236,9 @@ finds the owner through the Windows IPHlpAPI tables, sends a console-break for
 a graceful stop, then force-kills if it does not exit in time.
 
 **How do I kill the process on a port on Linux?**
-Same command, `portpin 8080`. portpin reads `/proc/net`, pins the process
-with a `pidfd` so it can never signal a reused PID, then sends `SIGTERM`
+Same command, `portpin 8080`. portpin asks the kernel for the socket table
+over netlink, pins the process with a `pidfd` so it can never signal a reused
+PID, then sends `SIGTERM`
 before `SIGKILL`.
 
 **How do I kill the process on a port on macOS?**
