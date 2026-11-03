@@ -72,7 +72,7 @@ func TestGroupMembersTreeWithoutPGID(t *testing.T) {
 func TestGroupMembersTreeStopsBelowOwnAncestors(t *testing.T) {
 	table := []ProcEntry{
 		{PID: 10, PPID: 0, StartTime: 1, Name: "runner.exe"},
-		{PID: 20, PPID: 10, StartTime: 2, Name: "supervisor.exe"},
+		{PID: 20, PPID: 10, StartTime: 2, Name: "node.exe", Cmdline: "node.exe npm-cli.js run dev"},
 		{PID: 30, PPID: 20, StartTime: 3, Name: "worker.exe"},
 		{PID: 40, PPID: 10, StartTime: 4, Name: "portpin.exe"},
 	}
