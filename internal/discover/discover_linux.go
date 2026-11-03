@@ -15,10 +15,14 @@ import (
 	"github.com/sv222/portpin/internal/model"
 )
 
-type linuxResolver struct{ root string }
+type linuxResolver struct {
+	root string
+	diag func() ([]ProcNetRow, []model.Protocol, error)
+}
 
-// New returns the Linux resolver, reading the live /proc filesystem.
-func New() Resolver { return &linuxResolver{root: "/proc"} }
+// New returns the Linux resolver. It reads the socket tables over
+// NETLINK_SOCK_DIAG and falls back to /proc/net when netlink is unavailable.
+func New() Resolver { return &linuxResolver{root: "/proc", diag: netlinkRows} }
 
 type netFile struct {
 	name  string
@@ -34,6 +38,15 @@ var netFiles = []netFile{
 }
 
 func (r *linuxResolver) rows() ([]ProcNetRow, []model.Protocol, error) {
+	if r.diag != nil {
+		if rows, protos, err := r.diag(); err == nil {
+			return rows, protos, nil
+		}
+	}
+	return r.procRows()
+}
+
+func (r *linuxResolver) procRows() ([]ProcNetRow, []model.Protocol, error) {
 	var rows []ProcNetRow
 	var protos []model.Protocol
 	for _, nf := range netFiles {
