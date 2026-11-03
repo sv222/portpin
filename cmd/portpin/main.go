@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ type flags struct {
 	dryRun   bool
 	timeout  int
 	yes      bool
+	group    bool
 	jsonOut  bool
 	version  bool
 }
@@ -57,6 +59,7 @@ func run() int {
 	pflag.BoolVarP(&f.dryRun, "dry-run", "d", false, "inspect and report; change nothing")
 	pflag.IntVarP(&f.timeout, "timeout", "t", 3000, "graceful wait budget in milliseconds")
 	pflag.BoolVarP(&f.yes, "yes", "y", false, "assume yes for all confirmations")
+	pflag.BoolVarP(&f.group, "group", "g", false, "also stop the target's process group and descendants")
 	pflag.BoolVarP(&f.jsonOut, "json", "j", false, "emit machine-readable JSON on stdout")
 	pflag.BoolVarP(&f.version, "version", "V", false, "print the version and exit")
 	pflag.Usage = usage
@@ -183,14 +186,29 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 		}
 	}
 
+	var groups map[uint32][]model.ProcMeta
+	if f.group {
+		if groups, err = processGroups(targets); err != nil {
+			report.ExitCode = exitFailure
+			emit(f, report, "--group refused: "+err.Error())
+			return exitFailure
+		}
+		for _, g := range groups {
+			needConfirm = needConfirm || len(g) > 1
+		}
+	}
+
 	if f.dryRun {
 		report.ExitCode = exitOK
-		report.Actions = dryRunActions(targets, advisories)
+		report.Actions = dryRunActions(targets, advisories, groups)
 		if !f.jsonOut {
 			_ = render.Table(os.Stdout, bindings)
-			for _, act := range report.Actions {
-				if act.Advisory != nil {
-					fmt.Println(strings.Join(act.Advisory.Lines, "\n"))
+			for _, b := range targets {
+				if a := advisories[b.Proc.PID]; a != nil {
+					fmt.Println(strings.Join(a.Lines, "\n"))
+				}
+				if g := groups[b.Proc.PID]; len(g) > 1 {
+					fmt.Println(groupLine(b.Proc.PID, g))
 				}
 			}
 		} else {
@@ -200,7 +218,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	}
 
 	if needConfirm && !f.yes {
-		if !confirm(owned, advisories) {
+		if !confirm(owned, advisories, groups) {
 			report.ExitCode = exitFailure
 			emit(f, report, "aborted")
 			return exitFailure
@@ -225,12 +243,13 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 
 	worst := exitOK
 	for _, b := range targets {
-		res := killOne(resolver, filter, b, opts)
+		res, pids := killOne(resolver, filter, b, groups[b.Proc.PID], opts)
 		act := render.Action{
 			PID:          res.PID,
 			Outcome:      res.Outcome.String(),
 			GracefulSent: res.GracefulSent,
 			HardKill:     res.UsedHardKill,
+			Group:        pids,
 			Advisory:     advisories[res.PID],
 		}
 		if res.Err != nil {
@@ -242,7 +261,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 			worst = code
 		}
 		if !f.jsonOut {
-			printOutcome(b, res, advisories[res.PID])
+			printOutcome(b, res, advisories[res.PID], len(pids))
 		}
 	}
 
@@ -352,27 +371,23 @@ func isConsole(f *os.File) bool {
 
 // killOne pins one binding's owner and drives the state machine. The port
 // probe re-runs discovery and asks whether this exact endpoint is still held
-// by this exact PID.
-func killOne(r discover.Resolver, filter model.Filter, b model.Binding, opts terminate.Options) terminate.Result {
+// by this exact PID, or with --group by any pinned member of its group.
+func killOne(r discover.Resolver, filter model.Filter, b model.Binding, group []model.ProcMeta, opts terminate.Options) (terminate.Result, []uint32) {
 	c, err := pin.Pin(*b.Proc)
 	if err != nil {
-		res := terminate.Result{PID: b.Proc.PID, Err: err}
-		switch {
-		case errors.Is(err, pin.ErrProcessGone):
-			res.Outcome = terminate.OutcomeReleased
-			res.Err = nil
-		case errors.Is(err, pin.ErrIdentityChanged):
-			res.Outcome = terminate.OutcomeIdentityChanged
-		case errors.Is(err, pin.ErrPermission):
-			res.Outcome = terminate.OutcomePermission
-		default:
-			res.Outcome = terminate.OutcomeError
+		return pinFailure(b.Proc.PID, err), nil
+	}
+	pids := []uint32{b.Proc.PID}
+	if len(group) > 1 {
+		gc, gp, err := pin.PinGroup(c, group, pin.Pin)
+		if err != nil {
+			_ = c.Close()
+			return pinFailure(b.Proc.PID, err), nil
 		}
-		return res
+		c, pids = gc, gp
 	}
 	defer func() { _ = c.Close() }()
 
-	pid := b.Proc.PID
 	endpoint := b.Endpoint
 	probe := func() (bool, error) {
 		current, err := r.Resolve(filter)
@@ -380,14 +395,76 @@ func killOne(r discover.Resolver, filter model.Filter, b model.Binding, opts ter
 			return false, err
 		}
 		for _, cb := range current {
-			if cb.Endpoint == endpoint && cb.Proc != nil && cb.Proc.PID == pid {
+			if cb.Endpoint == endpoint && cb.Proc != nil && slices.Contains(pids, cb.Proc.PID) {
 				return true, nil
 			}
 		}
 		return false, nil
 	}
 
-	return terminate.Run(c, probe, opts)
+	res := terminate.Run(c, probe, opts)
+	if len(group) <= 1 {
+		return res, nil
+	}
+	if res.Outcome == terminate.OutcomeZombie {
+		res.Outcome = terminate.OutcomeReleased
+	}
+	return res, pids
+}
+
+func pinFailure(pid uint32, err error) terminate.Result {
+	res := terminate.Result{PID: pid, Err: err}
+	switch {
+	case errors.Is(err, pin.ErrProcessGone):
+		res.Outcome = terminate.OutcomeReleased
+		res.Err = nil
+	case errors.Is(err, pin.ErrIdentityChanged):
+		res.Outcome = terminate.OutcomeIdentityChanged
+	case errors.Is(err, pin.ErrPermission):
+		res.Outcome = terminate.OutcomePermission
+	default:
+		res.Outcome = terminate.OutcomeError
+	}
+	return res
+}
+
+func processGroups(targets []model.Binding) (map[uint32][]model.ProcMeta, error) {
+	table, err := discover.ProcTable()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uint32][]model.ProcMeta, len(targets))
+	for _, b := range targets {
+		g, err := discover.GroupMembers(table, *b.Proc, uint32(os.Getpid()))
+		if err != nil {
+			return nil, err
+		}
+		out[b.Proc.PID] = g
+	}
+	return out, nil
+}
+
+func groupPIDs(g []model.ProcMeta) []uint32 {
+	if len(g) <= 1 {
+		return nil
+	}
+	out := make([]uint32, len(g))
+	for i, m := range g {
+		out[i] = m.PID
+	}
+	return out
+}
+
+func groupLine(pid uint32, g []model.ProcMeta) string {
+	parts := make([]string, len(g))
+	for i, m := range g {
+		name := m.Name
+		if name == "" {
+			name = "?"
+		}
+		parts[i] = fmt.Sprintf("%d (%s)", m.PID, name)
+	}
+	return fmt.Sprintf("group of pid %d: %s", pid, strings.Join(parts, ", "))
 }
 
 func ownedBindings(bs []model.Binding) []model.Binding {
@@ -417,20 +494,28 @@ func uniqueProcesses(bs []model.Binding) []model.Binding {
 	return out
 }
 
-func dryRunActions(targets []model.Binding, advisories map[uint32]*advise.Advisory) []render.Action {
+func dryRunActions(targets []model.Binding, advisories map[uint32]*advise.Advisory, groups map[uint32][]model.ProcMeta) []render.Action {
 	actions := make([]render.Action, 0, len(targets))
 	for _, b := range targets {
 		actions = append(actions, render.Action{
 			PID:      b.Proc.PID,
 			Outcome:  "dry-run",
+			Group:    groupPIDs(groups[b.Proc.PID]),
 			Advisory: advisories[b.Proc.PID],
 		})
 	}
 	return actions
 }
 
-func confirmPrompt(bs []model.Binding) string {
-	return fmt.Sprintf("terminate %d process(es)? [y/N] ", len(uniqueProcesses(bs)))
+func confirmPrompt(bs []model.Binding, groups map[uint32][]model.ProcMeta) string {
+	seen := make(map[uint32]bool)
+	for _, b := range uniqueProcesses(bs) {
+		seen[b.Proc.PID] = true
+		for _, m := range groups[b.Proc.PID] {
+			seen[m.PID] = true
+		}
+	}
+	return fmt.Sprintf("terminate %d process(es)? [y/N] ", len(seen))
 }
 
 func allTimeWait(bs []model.Binding) bool {
@@ -470,7 +555,7 @@ func exitCodeFor(o terminate.Outcome) int {
 	}
 }
 
-func printOutcome(b model.Binding, res terminate.Result, adv *advise.Advisory) {
+func printOutcome(b model.Binding, res terminate.Result, adv *advise.Advisory, group int) {
 	if adv != nil {
 		fmt.Println(strings.Join(adv.Lines, "\n"))
 	}
@@ -483,6 +568,9 @@ func printOutcome(b model.Binding, res terminate.Result, adv *advise.Advisory) {
 		how := "gracefully"
 		if res.UsedHardKill {
 			how = "after escalation to a hard kill"
+		}
+		if group > 1 {
+			how += fmt.Sprintf(", with %d other process(es) in its group", group-1)
 		}
 		fmt.Printf("released %s (pid %d, %s) %s\n", b.Endpoint, res.PID, name, how)
 	case terminate.OutcomeZombie:
@@ -501,10 +589,15 @@ func printOutcome(b model.Binding, res terminate.Result, adv *advise.Advisory) {
 // confirm prompts before acting on several processes at once, or on a
 // container proxy. It refuses rather than hangs when stdin is not a terminal.
 // The table lists every socket; the prompt counts the processes behind them.
-func confirm(bs []model.Binding, advisories map[uint32]*advise.Advisory) bool {
+func confirm(bs []model.Binding, advisories map[uint32]*advise.Advisory, groups map[uint32][]model.ProcMeta) bool {
 	_ = render.Table(os.Stderr, bs)
 	for _, a := range advisories {
 		fmt.Fprintln(os.Stderr, strings.Join(a.Lines, "\n"))
+	}
+	for _, b := range uniqueProcesses(bs) {
+		if g := groups[b.Proc.PID]; len(g) > 1 {
+			fmt.Fprintln(os.Stderr, groupLine(b.Proc.PID, g))
+		}
 	}
 
 	if !isConsole(os.Stdin) {
@@ -512,7 +605,7 @@ func confirm(bs []model.Binding, advisories map[uint32]*advise.Advisory) bool {
 		return false
 	}
 
-	fmt.Fprint(os.Stderr, confirmPrompt(bs))
+	fmt.Fprint(os.Stderr, confirmPrompt(bs, groups))
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
 		return false

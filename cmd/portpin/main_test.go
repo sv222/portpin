@@ -39,7 +39,7 @@ func TestPrintOutcomePrintsAdvisoryBeforeOutcome(t *testing.T) {
 	res := terminate.Result{PID: 42, Outcome: terminate.OutcomeReleased}
 	adv := &advise.Advisory{Kind: "container-proxy", Lines: []string{"[!] warning line one", "[i] warning line two"}}
 
-	out := captureStdout(t, func() { printOutcome(b, res, adv) })
+	out := captureStdout(t, func() { printOutcome(b, res, adv, 0) })
 
 	advIdx := strings.Index(out, "warning line one")
 	outcomeIdx := strings.Index(out, "released")
@@ -55,7 +55,7 @@ func TestPrintOutcomeNoAdvisoryPrintsNothingExtra(t *testing.T) {
 	}
 	res := terminate.Result{PID: 42, Outcome: terminate.OutcomeReleased}
 
-	out := captureStdout(t, func() { printOutcome(b, res, nil) })
+	out := captureStdout(t, func() { printOutcome(b, res, nil, 0) })
 
 	if strings.Contains(out, "[!]") || strings.Contains(out, "[i]") {
 		t.Fatalf("no advisory was given but advisory-looking output was printed:\n%s", out)
@@ -131,7 +131,7 @@ func TestSingleProcessWithSeveralSocketsNeedsNoConfirmation(t *testing.T) {
 }
 
 func TestDryRunActionsAreOnePerProcess(t *testing.T) {
-	actions := dryRunActions(uniqueProcesses(reuseaddrSockets()), nil)
+	actions := dryRunActions(uniqueProcesses(reuseaddrSockets()), nil, nil)
 	if len(actions) != 3 {
 		t.Fatalf("dryRunActions() returned %d actions for 20 sockets held by 3 processes, want 3", len(actions))
 	}
@@ -152,7 +152,7 @@ func TestDryRunActionsAreOnePerProcess(t *testing.T) {
 func TestDryRunActionsCarryAdvisories(t *testing.T) {
 	adv := &advise.Advisory{Kind: "container-proxy", Lines: []string{"[!] docker-proxy"}}
 	targets := uniqueProcesses(mdnsSockets(100, 200))
-	actions := dryRunActions(targets, map[uint32]*advise.Advisory{200: adv})
+	actions := dryRunActions(targets, map[uint32]*advise.Advisory{200: adv}, nil)
 	if len(actions) != 2 {
 		t.Fatalf("dryRunActions() returned %d actions, want 2", len(actions))
 	}
@@ -165,8 +165,38 @@ func TestDryRunActionsCarryAdvisories(t *testing.T) {
 }
 
 func TestConfirmPromptCountsProcessesNotSockets(t *testing.T) {
-	got := confirmPrompt(reuseaddrSockets())
+	got := confirmPrompt(reuseaddrSockets(), nil)
 	if !strings.Contains(got, "terminate 3 process(es)?") {
 		t.Fatalf("confirmPrompt() = %q, want a count of 3 processes for 20 sockets", got)
+	}
+}
+
+func TestGroupAwareConfirmAndDryRun(t *testing.T) {
+	targets := uniqueProcesses(mdnsSockets(100, 200))
+	groups := map[uint32][]model.ProcMeta{
+		100: {{PID: 90, Name: "npm"}, {PID: 100}, {PID: 200}},
+		200: {{PID: 200}},
+	}
+	if got := confirmPrompt(targets, groups); !strings.Contains(got, "terminate 3 process(es)?") {
+		t.Errorf("confirmPrompt() = %q, want 3 distinct processes", got)
+	}
+	acts := dryRunActions(targets, nil, groups)
+	if len(acts[0].Group) != 3 || acts[0].Group[0] != 90 || acts[1].Group != nil {
+		t.Errorf("groups = %v / %v", acts[0].Group, acts[1].Group)
+	}
+	if got, want := groupLine(100, groups[100]), "group of pid 100: 90 (npm), 100 (?), 200 (?)"; got != want {
+		t.Errorf("groupLine() = %q, want %q", got, want)
+	}
+}
+
+func TestPrintOutcomeMentionsGroup(t *testing.T) {
+	b := model.Binding{
+		Endpoint: netip.MustParseAddrPort("127.0.0.1:8080"),
+		Proc:     &model.ProcMeta{PID: 42, Name: "node"},
+	}
+	res := terminate.Result{PID: 42, Outcome: terminate.OutcomeReleased}
+	out := captureStdout(t, func() { printOutcome(b, res, nil, 3) })
+	if !strings.Contains(out, "with 2 other process(es) in its group") {
+		t.Fatalf("got %q", out)
 	}
 }
