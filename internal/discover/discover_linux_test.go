@@ -181,3 +181,48 @@ func TestListAllReturnsListeners(t *testing.T) {
 		}
 	}
 }
+
+func writeStat(t *testing.T, root string, pid, ppid, pgid, sid int, name string, start uint64) {
+	t.Helper()
+	dir := filepath.Join(root, fmt.Sprint(pid))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf("%d (%s) S %d %d %d%s %d 0 0\n", pid, name, ppid, pgid, sid, strings.Repeat(" 0", 15), start)
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcTableMarksSessionLeaders(t *testing.T) {
+	root := t.TempDir()
+	writeStat(t, root, 800, 1, 800, 800, "dockerd", 30)
+	writeStat(t, root, 900, 800, 800, 800, "docker-proxy", 40)
+	writeStat(t, root, 10, 5, 20, 5, "node (v2)", 50)
+	if err := os.MkdirAll(filepath.Join(root, "self"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	table, err := procTable(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[uint32]ProcEntry{}
+	for _, e := range table {
+		got[e.PID] = e
+	}
+	if len(got) != 3 {
+		t.Fatalf("table = %+v, want 3 entries", table)
+	}
+	for pid, want := range map[uint32]bool{800: true, 900: false, 10: false} {
+		if got[pid].SessionLeader != want {
+			t.Errorf("pid %d: SessionLeader = %v, want %v", pid, got[pid].SessionLeader, want)
+		}
+	}
+	if e := got[900]; e.PPID != 800 || e.PGID != 800 || e.StartTime != 40 || e.Name != "docker-proxy" {
+		t.Errorf("pid 900 = %+v", e)
+	}
+	if got[10].Name != "node (v2)" {
+		t.Errorf("name = %q", got[10].Name)
+	}
+}

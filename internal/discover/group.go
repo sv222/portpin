@@ -11,12 +11,13 @@ import (
 )
 
 type ProcEntry struct {
-	PID       uint32
-	PPID      uint32
-	PGID      uint32
-	StartTime uint64
-	Name      string
-	Cmdline   string
+	PID           uint32
+	PPID          uint32
+	PGID          uint32
+	SessionLeader bool
+	StartTime     uint64
+	Name          string
+	Cmdline       string
 }
 
 var hosts = map[string]bool{
@@ -53,13 +54,16 @@ func boundary(e ProcEntry) bool {
 var (
 	ErrOwnGroup         = errors.New("the group includes portpin or the shell that started it")
 	ErrProtectedProcess = errors.New("the group would include PID 1 or a process with no parent")
+	ErrDaemonGroup      = errors.New("the group is led by a session leader or a daemon started by PID 1")
 )
 
 func IsRefusal(err error) bool {
-	return errors.Is(err, ErrOwnGroup) || errors.Is(err, ErrProtectedProcess)
+	return errors.Is(err, ErrOwnGroup) || errors.Is(err, ErrProtectedProcess) || errors.Is(err, ErrDaemonGroup)
 }
 
 func protected(e ProcEntry) bool { return e.PID == 1 || e.PPID == 0 }
+
+func detached(e ProcEntry) bool { return e.SessionLeader || e.PPID == 1 }
 
 func refusal(err error, e ProcEntry) error {
 	name := e.Name
@@ -104,10 +108,14 @@ func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]mode
 
 	in := map[uint32]ProcEntry{root.PID: root}
 	if t.PGID != 0 {
+		if leader, ok := byPID[t.PGID]; ok && leader.PID != t.PID && detached(leader) {
+			return nil, refusal(ErrDaemonGroup, leader)
+		}
 		for _, e := range table {
-			if e.PGID == t.PGID {
-				in[e.PID] = e
+			if e.PGID != t.PGID || (e.PID != t.PID && detached(e) && !protected(e)) {
+				continue
 			}
+			in[e.PID] = e
 		}
 	}
 	for queue := []ProcEntry{root}; len(queue) > 0; queue = queue[1:] {
