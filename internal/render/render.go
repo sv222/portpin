@@ -91,6 +91,7 @@ type Action struct {
 	Outcome      string           `json:"outcome"`
 	GracefulSent bool             `json:"graceful_sent"`
 	HardKill     bool             `json:"hard_kill"`
+	Group        []uint32         `json:"group,omitempty"`
 	Error        string           `json:"error,omitempty"`
 	Advisory     *advise.Advisory `json:"advisory,omitempty"`
 }
