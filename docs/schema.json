@@ -9,7 +9,7 @@
     "target": { "type": "string", "description": "The TARGET argument as given, or \"list\"." },
     "bindings": { "type": "array", "items": { "$ref": "#/$defs/binding" } },
     "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
-    "exit_code": { "type": "integer", "enum": [0, 1, 2, 3, 4, 5] },
+    "exit_code": { "type": "integer", "enum": [0, 1, 2, 3, 4, 5, 6] },
     "error": { "type": "string" }
   },
   "$defs": {

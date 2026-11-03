@@ -3,6 +3,7 @@ package discover
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -49,7 +50,24 @@ func boundary(e ProcEntry) bool {
 	return true
 }
 
-var ErrOwnGroup = errors.New("the group includes portpin or the shell that started it")
+var (
+	ErrOwnGroup         = errors.New("the group includes portpin or the shell that started it")
+	ErrProtectedProcess = errors.New("the group would include PID 1 or a process with no parent")
+)
+
+func IsRefusal(err error) bool {
+	return errors.Is(err, ErrOwnGroup) || errors.Is(err, ErrProtectedProcess)
+}
+
+func protected(e ProcEntry) bool { return e.PID == 1 || e.PPID == 0 }
+
+func refusal(err error, e ProcEntry) error {
+	name := e.Name
+	if name == "" {
+		name = "?"
+	}
+	return fmt.Errorf("%w: pid %d (%s)", err, e.PID, name)
+}
 
 func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]model.ProcMeta, error) {
 	byPID := make(map[uint32]ProcEntry, len(table))
@@ -102,12 +120,6 @@ func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]mode
 			queue = append(queue, c)
 		}
 	}
-	for pid := range in {
-		if selfChain[pid] {
-			return nil, ErrOwnGroup
-		}
-	}
-
 	depth := func(e ProcEntry) int {
 		d := 0
 		for p, ok := in[e.PPID]; ok && d < len(in); p, ok = in[p.PPID] {
@@ -122,6 +134,17 @@ func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]mode
 	slices.SortFunc(members, func(a, b ProcEntry) int {
 		return cmp.Or(cmp.Compare(depth(a), depth(b)), cmp.Compare(a.PID, b.PID))
 	})
+
+	for _, e := range members {
+		if protected(e) {
+			return nil, refusal(ErrProtectedProcess, e)
+		}
+	}
+	for _, e := range members {
+		if selfChain[e.PID] {
+			return nil, ErrOwnGroup
+		}
+	}
 
 	out := make([]model.ProcMeta, 0, len(members))
 	for _, e := range members {

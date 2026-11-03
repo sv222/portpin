@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"os"
@@ -9,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/sv222/portpin/internal/advise"
+	"github.com/sv222/portpin/internal/discover"
 	"github.com/sv222/portpin/internal/model"
+	"github.com/sv222/portpin/internal/render"
 	"github.com/sv222/portpin/internal/terminate"
 )
 
@@ -198,5 +203,35 @@ func TestPrintOutcomeMentionsGroup(t *testing.T) {
 	out := captureStdout(t, func() { printOutcome(b, res, nil, 3) })
 	if !strings.Contains(out, "with 2 other process(es) in its group") {
 		t.Fatalf("got %q", out)
+	}
+}
+
+func TestGroupFailureExitCodes(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want int
+	}{
+		"own group":         {discover.ErrOwnGroup, exitUnsafeGroup},
+		"protected process": {fmt.Errorf("%w: pid 1 (init)", discover.ErrProtectedProcess), exitUnsafeGroup},
+		"table unreadable":  {errors.New("procfs: unreadable"), exitFailure},
+	}
+	for name, c := range cases {
+		var got int
+		out := captureStdout(t, func() {
+			got = groupFailure(flags{jsonOut: true}, render.Report{Target: "8080"}, c.err)
+		})
+		if got != c.want {
+			t.Errorf("%s: exit code = %d, want %d", name, got, c.want)
+		}
+		var doc struct {
+			ExitCode int    `json:"exit_code"`
+			Error    string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%s: invalid JSON: %v\n%s", name, err, out)
+		}
+		if doc.ExitCode != c.want || !strings.HasPrefix(doc.Error, "--group refused: ") {
+			t.Errorf("%s: report = %+v", name, doc)
+		}
 	}
 }
