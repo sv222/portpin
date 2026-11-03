@@ -4,6 +4,7 @@ package testutil
 
 import (
 	"os/exec"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -23,4 +24,10 @@ import (
 // used here instead.
 func detachConsole(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_CONSOLE}
+}
+
+func ownGroup(cmd *exec.Cmd) { detachConsole(cmd) }
+
+func killGroup(cmd *exec.Cmd) {
+	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
 }
