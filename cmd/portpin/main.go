@@ -124,8 +124,7 @@ Exit codes:
 func runList(f flags) int {
 	bindings, err := discover.New().ListAll()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "discovery failed:", err)
-		return exitFailure
+		return fatal(f, render.Report{Target: "list"}, "discovery failed: "+err.Error())
 	}
 	if f.jsonOut {
 		if err := render.JSON(os.Stdout, render.Report{
@@ -148,8 +147,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 
 	bindings, err := resolver.Resolve(filter)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "discovery failed:", err)
-		return exitFailure
+		return fatal(f, render.Report{Target: rawTarget}, "discovery failed: "+err.Error())
 	}
 
 	report := render.Report{Target: rawTarget, Bindings: bindings}
@@ -189,9 +187,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	var groups map[uint32][]model.ProcMeta
 	if f.group {
 		if groups, err = processGroups(targets); err != nil {
-			report.ExitCode = exitFailure
-			emit(f, report, "--group refused: "+err.Error())
-			return exitFailure
+			return fatal(f, report, "--group refused: "+err.Error())
 		}
 		for _, g := range groups {
 			needConfirm = needConfirm || len(g) > 1
@@ -620,4 +616,15 @@ func emit(f flags, r render.Report, human string) {
 		return
 	}
 	fmt.Println(human)
+}
+
+func fatal(f flags, r render.Report, msg string) int {
+	r.ExitCode = exitFailure
+	r.Error = msg
+	if f.jsonOut {
+		_ = render.JSON(os.Stdout, r)
+	} else {
+		fmt.Fprintln(os.Stderr, msg)
+	}
+	return exitFailure
 }

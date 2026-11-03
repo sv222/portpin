@@ -103,6 +103,7 @@ type Report struct {
 	Bindings []model.Binding `json:"bindings"`
 	Actions  []Action        `json:"actions"`
 	ExitCode int             `json:"exit_code"`
+	Error    string          `json:"error,omitempty"`
 }
 
 // JSON writes r as a single indented JSON object followed by a newline.
