@@ -30,7 +30,8 @@ PID, and verifies the process start time before and after checking the socket.
 On Windows it holds a process handle, which the NT kernel will not recycle, and
 re-checks the creation time before every signal. On macOS it watches the
 process with a kqueue exit event and re-checks the start time before every
-signal. No signal is ever sent to a bare PID that could have been reused.
+signal. On Linux and Windows no signal is ever sent to a bare PID that could
+have been reused.
 
 **Endpoint disambiguation.** Two processes can hold the same port on different
 addresses. Ask for the one you mean.
