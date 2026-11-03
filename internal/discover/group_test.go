@@ -2,7 +2,9 @@ package discover
 
 import (
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sv222/portpin/internal/model"
@@ -125,5 +127,82 @@ func TestBoundary(t *testing.T) {
 		if got := boundary(c.e); got != c.want {
 			t.Errorf("boundary(%+v) = %v, want %v", c.e, got, c.want)
 		}
+	}
+}
+
+func TestGroupMembersRefusesProtectedProcesses(t *testing.T) {
+	cases := map[string]struct {
+		table  []ProcEntry
+		target model.ProcMeta
+		detail string
+	}{
+		"target is pid 1": {
+			table: []ProcEntry{
+				{PID: 1, PPID: 0, PGID: 1, StartTime: 1, Name: "init"},
+				{PID: 90, PPID: 80, PGID: 90, StartTime: 9, Name: "portpin"},
+				{PID: 80, PPID: 1, PGID: 80, StartTime: 8, Name: "sh"},
+			},
+			target: model.ProcMeta{PID: 1, StartTime: 1},
+			detail: "pid 1 (init)",
+		},
+		"pid 1 shares the process group": {
+			table: []ProcEntry{
+				{PID: 1, PPID: 0, PGID: 1, StartTime: 1, Name: "init"},
+				{PID: 40, PPID: 1, PGID: 1, StartTime: 4, Name: "app"},
+				{PID: 90, PPID: 80, PGID: 90, StartTime: 9, Name: "portpin"},
+				{PID: 80, PPID: 79, PGID: 80, StartTime: 8, Name: "sh"},
+				{PID: 79, PPID: 0, PGID: 79, StartTime: 2, Name: "sshd"},
+			},
+			target: model.ProcMeta{PID: 40, StartTime: 4},
+			detail: "pid 1 (init)",
+		},
+		"parentless process shares the process group": {
+			table: []ProcEntry{
+				{PID: 2, PPID: 0, PGID: 7, StartTime: 1, Name: "kthreadd"},
+				{PID: 50, PPID: 7, PGID: 7, StartTime: 5, Name: "app"},
+				{PID: 7, PPID: 6, PGID: 7, StartTime: 3, Name: "leader"},
+				{PID: 90, PPID: 80, PGID: 90, StartTime: 9, Name: "portpin"},
+				{PID: 80, PPID: 79, PGID: 80, StartTime: 8, Name: "sh"},
+				{PID: 79, PPID: 78, PGID: 79, StartTime: 2, Name: "login"},
+			},
+			target: model.ProcMeta{PID: 50, StartTime: 5},
+			detail: "pid 2 (kthreadd)",
+		},
+		"climb reaches a parentless process": {
+			table: []ProcEntry{
+				{PID: 8, PPID: 0, StartTime: 1, Name: "cmd.exe", Cmdline: "cmd.exe /c start.bat"},
+				{PID: 100, PPID: 8, StartTime: 5, Name: "node.exe"},
+				{PID: 400, PPID: 300, StartTime: 12, Name: "portpin.exe"},
+				{PID: 300, PPID: 299, StartTime: 11, Name: "cmd.exe"},
+			},
+			target: model.ProcMeta{PID: 100, StartTime: 5},
+			detail: "pid 8 (cmd.exe)",
+		},
+	}
+	for name, c := range cases {
+		self := uint32(90)
+		if name == "climb reaches a parentless process" {
+			self = 400
+		}
+		got, err := GroupMembers(c.table, c.target, self)
+		if !errors.Is(err, ErrProtectedProcess) || !IsRefusal(err) {
+			t.Errorf("%s: err = %v, want ErrProtectedProcess", name, err)
+			continue
+		}
+		if got != nil {
+			t.Errorf("%s: members = %v, want none", name, pids(got))
+		}
+		if !strings.Contains(err.Error(), c.detail) {
+			t.Errorf("%s: err = %q, want it to name %s", name, err, c.detail)
+		}
+	}
+}
+
+func TestIsRefusal(t *testing.T) {
+	if !IsRefusal(ErrOwnGroup) || !IsRefusal(fmt.Errorf("wrapped: %w", ErrProtectedProcess)) {
+		t.Error("group refusals were not recognised")
+	}
+	if IsRefusal(errors.New("procfs: unreadable")) || IsRefusal(nil) {
+		t.Error("an ordinary error was taken for a refusal")
 	}
 }

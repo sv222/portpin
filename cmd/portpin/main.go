@@ -29,12 +29,13 @@ var version = "dev"
 
 // Exit codes, fixed by the spec.
 const (
-	exitOK         = 0
-	exitFailure    = 1
-	exitTimeWait   = 2
-	exitIdentity   = 3
-	exitTimeout    = 4
-	exitPermission = 5
+	exitOK          = 0
+	exitFailure     = 1
+	exitTimeWait    = 2
+	exitIdentity    = 3
+	exitTimeout     = 4
+	exitPermission  = 5
+	exitUnsafeGroup = 6
 )
 
 type flags struct {
@@ -118,6 +119,7 @@ Exit codes:
   3  process identity changed during teardown; aborted
   4  timeout: the endpoint was still held after the hard kill
   5  permission denied
+  6  --group refused: the group is not safe to stop
 `)
 }
 
@@ -187,7 +189,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	var groups map[uint32][]model.ProcMeta
 	if f.group {
 		if groups, err = processGroups(targets); err != nil {
-			return fatal(f, report, "--group refused: "+err.Error())
+			return groupFailure(f, report, err)
 		}
 		for _, g := range groups {
 			needConfirm = needConfirm || len(g) > 1
@@ -619,12 +621,24 @@ func emit(f flags, r render.Report, human string) {
 }
 
 func fatal(f flags, r render.Report, msg string) int {
-	r.ExitCode = exitFailure
+	return fail(f, r, msg, exitFailure)
+}
+
+func groupFailure(f flags, r render.Report, err error) int {
+	code := exitFailure
+	if discover.IsRefusal(err) {
+		code = exitUnsafeGroup
+	}
+	return fail(f, r, "--group refused: "+err.Error(), code)
+}
+
+func fail(f flags, r render.Report, msg string, code int) int {
+	r.ExitCode = code
 	r.Error = msg
 	if f.jsonOut {
 		_ = render.JSON(os.Stdout, r)
 	} else {
 		fmt.Fprintln(os.Stderr, msg)
 	}
-	return exitFailure
+	return code
 }
