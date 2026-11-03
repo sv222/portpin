@@ -25,8 +25,9 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 2 {
-		ln, err := net.Listen("tcp", os.Args[1])
+	addr := os.Args[2]
+	if len(os.Args) > 3 {
+		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			os.Exit(1)
 		}
@@ -36,7 +37,7 @@ func main() {
 		return
 	}
 	for first := true; ; first = false {
-		cmd := exec.Command(os.Args[0], os.Args[1], "worker")
+		cmd := exec.Command(os.Args[0], "npm-cli.js", addr, "worker")
 		out, _ := cmd.StdoutPipe()
 		if err := cmd.Start(); err == nil {
 			bufio.NewReader(out).ReadString('\n')
@@ -74,10 +75,11 @@ func supervisorBinary(t *testing.T) string {
 			supErr = err
 			return
 		}
-		out := filepath.Join(dir, "supervisor")
+		name := "supervisor"
 		if runtime.GOOS == "windows" {
-			out += ".exe"
+			name = "node.exe"
 		}
+		out := filepath.Join(dir, name)
 		if b, err := exec.Command("go", "build", "-o", out, src).CombinedOutput(); err != nil {
 			supErr = fmt.Errorf("building the supervisor helper failed: %v\n%s", err, b)
 			return
@@ -92,7 +94,7 @@ func supervisorBinary(t *testing.T) string {
 
 func StartSupervised(t *testing.T, addr string) *Supervised {
 	t.Helper()
-	cmd := exec.Command(supervisorBinary(t), addr)
+	cmd := exec.Command(supervisorBinary(t), "npm-cli.js", addr)
 	ownGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

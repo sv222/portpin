@@ -31,9 +31,71 @@ var shells = map[string]bool{
 	"sh.exe": true, "zsh.exe": true, "fish.exe": true, "nu.exe": true,
 }
 
+var climbShells = map[string]bool{
+	"cmd.exe": true, "powershell.exe": true, "pwsh.exe": true, "bash.exe": true, "sh.exe": true,
+}
+
+var supervisorNames = map[string]bool{"npm.cmd": true, "npx.cmd": true}
+
+var npmScripts = map[string]bool{
+	"npm": true, "npx": true, "npm.cmd": true, "npx.cmd": true, "npm-cli.js": true, "npx-cli.js": true,
+}
+
 var oneShotFlags = map[string]bool{"/c": true, "-c": true, "-command": true, "-file": true}
 
-func IsShell(name string) bool { return shells[strings.ToLower(name)] }
+func WantsCmdline(name string) bool {
+	n := strings.ToLower(name)
+	return shells[n] || n == "node.exe"
+}
+
+func splitArgs(s string) []string {
+	var args []string
+	var cur strings.Builder
+	quoted, started := false, false
+	for _, r := range s {
+		switch {
+		case r == '"':
+			quoted, started = !quoted, true
+		case (r == ' ' || r == '\t') && !quoted:
+			if started {
+				args = append(args, cur.String())
+				cur.Reset()
+				started = false
+			}
+		default:
+			cur.WriteRune(r)
+			started = true
+		}
+	}
+	if started {
+		args = append(args, cur.String())
+	}
+	return args
+}
+
+func runsNpm(cmdline string) bool {
+	for _, a := range splitArgs(cmdline) {
+		base := strings.ToLower(a[strings.LastIndexAny(a, `\/`)+1:])
+		if base == "node.exe" || base == "node" || strings.HasPrefix(a, "-") {
+			continue
+		}
+		return npmScripts[base]
+	}
+	return false
+}
+
+func climbable(e ProcEntry) bool {
+	name := strings.ToLower(e.Name)
+	switch {
+	case supervisorNames[name]:
+		return true
+	case climbShells[name]:
+		return !boundary(e)
+	case name == "node.exe":
+		return runsNpm(e.Cmdline)
+	}
+	return false
+}
 
 func boundary(e ProcEntry) bool {
 	name := strings.ToLower(e.Name)
@@ -99,7 +161,7 @@ func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]mode
 	root := t
 	for t.PGID == 0 {
 		p, ok := byPID[root.PPID]
-		if !ok || p.PID == root.PID || selfChain[p.PID] || boundary(p) ||
+		if !ok || p.PID == root.PID || selfChain[p.PID] || !climbable(p) ||
 			p.StartTime == 0 || p.StartTime > root.StartTime {
 			break
 		}

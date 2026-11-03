@@ -223,7 +223,7 @@ func ProcTable() ([]ProcEntry, error) {
 		if st, err := ReadCreationTime(pe.ProcessID); err == nil {
 			e.StartTime = st
 		}
-		if IsShell(e.Name) {
+		if WantsCmdline(e.Name) {
 			e.Cmdline = readCommandLine(pe.ProcessID)
 		}
 		out = append(out, e)
