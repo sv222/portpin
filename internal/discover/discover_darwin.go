@@ -183,3 +183,22 @@ func readProcMeta(pid uint32, name string) *model.ProcMeta {
 	}
 	return m
 }
+
+func ProcTable() ([]ProcEntry, error) {
+	ks, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProcEntry, 0, len(ks))
+	for i := range ks {
+		k := &ks[i]
+		out = append(out, ProcEntry{
+			PID:       uint32(k.Proc.P_pid),
+			PPID:      uint32(k.Eproc.Ppid),
+			PGID:      uint32(k.Eproc.Pgid),
+			StartTime: startTimeOf(k),
+			Name:      unix.ByteSliceToString(k.Proc.P_comm[:]),
+		})
+	}
+	return out, nil
+}

@@ -356,3 +356,36 @@ func statField(line string, n int) (uint64, error) {
 	}
 	return strconv.ParseUint(fields[idx], 10, 64)
 }
+
+func ProcTable() ([]ProcEntry, error) { return procTable("/proc") }
+
+func procTable(root string) ([]ProcEntry, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []ProcEntry
+	for _, e := range entries {
+		pid, err := strconv.ParseUint(e.Name(), 10, 32)
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(root, e.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		line := string(raw)
+		ppid, err1 := statField(line, 4)
+		pgid, err2 := statField(line, 5)
+		st, err3 := statField(line, 22)
+		if err1 != nil || err2 != nil || err3 != nil {
+			continue
+		}
+		name := ""
+		if i, j := strings.IndexByte(line, '('), strings.LastIndexByte(line, ')'); i >= 0 && j > i {
+			name = line[i+1 : j]
+		}
+		out = append(out, ProcEntry{PID: uint32(pid), PPID: uint32(ppid), PGID: uint32(pgid), StartTime: st, Name: name})
+	}
+	return out, nil
+}
