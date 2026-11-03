@@ -223,10 +223,28 @@ func ProcTable() ([]ProcEntry, error) {
 		if st, err := ReadCreationTime(pe.ProcessID); err == nil {
 			e.StartTime = st
 		}
+		if IsShell(e.Name) {
+			e.Cmdline = readCommandLine(pe.ProcessID)
+		}
 		out = append(out, e)
 	}
 	if err != windows.ERROR_NO_MORE_FILES {
 		return nil, err
 	}
 	return out, nil
+}
+
+func readCommandLine(pid uint32) string {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	buf := make([]byte, 64*1024)
+	var n uint32
+	if err := windows.NtQueryInformationProcess(h, windows.ProcessCommandLineInformation,
+		unsafe.Pointer(&buf[0]), uint32(len(buf)), &n); err != nil {
+		return ""
+	}
+	return (*windows.NTUnicodeString)(unsafe.Pointer(&buf[0])).String()
 }
