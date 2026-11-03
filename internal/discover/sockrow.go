@@ -224,15 +224,18 @@ func normAddrPort(ap netip.AddrPort) netip.AddrPort {
 }
 
 func UnownedRows(table, owned []SockRow) []SockRow {
-	seen := make(map[sockKey]bool, len(owned))
+	left := make(map[sockKey]int, len(owned))
 	for _, r := range owned {
-		seen[keyOf(r)] = true
+		left[keyOf(r)]++
 	}
 	var out []SockRow
 	for _, r := range table {
-		if !seen[keyOf(r)] {
-			out = append(out, r)
+		k := keyOf(r)
+		if left[k] > 0 {
+			left[k]--
+			continue
 		}
+		out = append(out, r)
 	}
 	return out
 }

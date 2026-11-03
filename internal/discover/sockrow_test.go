@@ -2,6 +2,7 @@ package discover
 
 import (
 	"encoding/binary"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -147,6 +148,21 @@ func TestUnownedRows(t *testing.T) {
 	want := []string{"[::1]:9090", "127.0.0.1:51000", "127.0.0.1:8080"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unowned = %v, want %v", got, want)
+	}
+}
+
+func TestUnownedRowsSharedKey(t *testing.T) {
+	ep := netip.MustParseAddrPort("0.0.0.0:5353")
+	row := SockRow{Protocol: model.UDP, Local: ep, State: model.StateListen}
+	table := []SockRow{row, row}
+	if got := UnownedRows(table, []SockRow{row}); len(got) != 1 {
+		t.Fatalf("one owner of two sockets: unowned = %v, want 1 row", got)
+	}
+	if got := UnownedRows(table, []SockRow{row, row}); len(got) != 0 {
+		t.Fatalf("both owned: unowned = %v, want none", got)
+	}
+	if got := UnownedRows(table, nil); len(got) != 2 {
+		t.Fatalf("none owned: unowned = %v, want 2 rows", got)
 	}
 }
 
