@@ -21,6 +21,8 @@ const (
 	lsofPath    = "/usr/sbin/lsof"
 	netstatPath = "/usr/sbin/netstat"
 	szomb       = 5
+
+	eprocSessionLeader = 0x02
 )
 
 type darwinResolver struct{}
@@ -193,11 +195,12 @@ func ProcTable() ([]ProcEntry, error) {
 	for i := range ks {
 		k := &ks[i]
 		out = append(out, ProcEntry{
-			PID:       uint32(k.Proc.P_pid),
-			PPID:      uint32(k.Eproc.Ppid),
-			PGID:      uint32(k.Eproc.Pgid),
-			StartTime: startTimeOf(k),
-			Name:      unix.ByteSliceToString(k.Proc.P_comm[:]),
+			PID:           uint32(k.Proc.P_pid),
+			PPID:          uint32(k.Eproc.Ppid),
+			PGID:          uint32(k.Eproc.Pgid),
+			SessionLeader: k.Eproc.Flag&eprocSessionLeader != 0,
+			StartTime:     startTimeOf(k),
+			Name:          unix.ByteSliceToString(k.Proc.P_comm[:]),
 		})
 	}
 	return out, nil

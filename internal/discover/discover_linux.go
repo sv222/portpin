@@ -377,15 +377,19 @@ func procTable(root string) ([]ProcEntry, error) {
 		line := string(raw)
 		ppid, err1 := statField(line, 4)
 		pgid, err2 := statField(line, 5)
-		st, err3 := statField(line, 22)
-		if err1 != nil || err2 != nil || err3 != nil {
+		sid, err3 := statField(line, 6)
+		st, err4 := statField(line, 22)
+		if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 			continue
 		}
 		name := ""
 		if i, j := strings.IndexByte(line, '('), strings.LastIndexByte(line, ')'); i >= 0 && j > i {
 			name = line[i+1 : j]
 		}
-		out = append(out, ProcEntry{PID: uint32(pid), PPID: uint32(ppid), PGID: uint32(pgid), StartTime: st, Name: name})
+		out = append(out, ProcEntry{
+			PID: uint32(pid), PPID: uint32(ppid), PGID: uint32(pgid), SessionLeader: sid == pid,
+			StartTime: st, Name: name,
+		})
 	}
 	return out, nil
 }

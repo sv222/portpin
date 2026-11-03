@@ -206,3 +206,118 @@ func TestIsRefusal(t *testing.T) {
 		t.Error("an ordinary error was taken for a refusal")
 	}
 }
+
+func TestGroupMembersRefusesDaemonLeader(t *testing.T) {
+	cases := map[string]struct {
+		table  []ProcEntry
+		target model.ProcMeta
+		detail string
+	}{
+		"docker-proxy shares the group of dockerd": {
+			table: []ProcEntry{
+				{PID: 1, PPID: 0, PGID: 1, SessionLeader: true, StartTime: 1, Name: "systemd"},
+				{PID: 800, PPID: 1, PGID: 800, SessionLeader: true, StartTime: 3, Name: "dockerd"},
+				{PID: 900, PPID: 800, PGID: 800, StartTime: 10, Name: "docker-proxy"},
+				{PID: 950, PPID: 940, PGID: 950, StartTime: 20, Name: "portpin"},
+				{PID: 940, PPID: 1, PGID: 940, SessionLeader: true, StartTime: 15, Name: "sshd"},
+			},
+			target: model.ProcMeta{PID: 900, StartTime: 10},
+			detail: "pid 800 (dockerd)",
+		},
+		"script shares the group of its shell": {
+			table: []ProcEntry{
+				{PID: 1, PPID: 0, PGID: 1, SessionLeader: true, StartTime: 1, Name: "init"},
+				{PID: 10, PPID: 5, PGID: 10, SessionLeader: true, StartTime: 5, Name: "bash"},
+				{PID: 20, PPID: 10, PGID: 10, StartTime: 10, Name: "python"},
+				{PID: 30, PPID: 5, PGID: 30, StartTime: 20, Name: "portpin"},
+				{PID: 5, PPID: 1, PGID: 5, SessionLeader: true, StartTime: 2, Name: "tmux"},
+			},
+			target: model.ProcMeta{PID: 20, StartTime: 10},
+			detail: "pid 10 (bash)",
+		},
+		"leader is a daemon of init without a session": {
+			table: []ProcEntry{
+				{PID: 1, PPID: 0, PGID: 1, SessionLeader: true, StartTime: 1, Name: "init"},
+				{PID: 700, PPID: 1, PGID: 700, StartTime: 3, Name: "cupsd"},
+				{PID: 710, PPID: 700, PGID: 700, StartTime: 10, Name: "helper"},
+				{PID: 30, PPID: 5, PGID: 30, StartTime: 20, Name: "portpin"},
+				{PID: 5, PPID: 1, PGID: 5, SessionLeader: true, StartTime: 2, Name: "tmux"},
+			},
+			target: model.ProcMeta{PID: 710, StartTime: 10},
+			detail: "pid 700 (cupsd)",
+		},
+	}
+	for name, c := range cases {
+		self := uint32(30)
+		if name == "docker-proxy shares the group of dockerd" {
+			self = 950
+		}
+		got, err := GroupMembers(c.table, c.target, self)
+		if !errors.Is(err, ErrDaemonGroup) || !IsRefusal(err) {
+			t.Errorf("%s: err = %v, want ErrDaemonGroup", name, err)
+			continue
+		}
+		if got != nil {
+			t.Errorf("%s: members = %v, want none", name, pids(got))
+		}
+		if !strings.Contains(err.Error(), c.detail) {
+			t.Errorf("%s: err = %q, want it to name %s", name, err, c.detail)
+		}
+	}
+}
+
+func TestGroupMembersKeepsDaemonTargetAndOwnWorkers(t *testing.T) {
+	table := []ProcEntry{
+		{PID: 1, PPID: 0, PGID: 1, SessionLeader: true, StartTime: 1, Name: "init"},
+		{PID: 600, PPID: 1, PGID: 600, SessionLeader: true, StartTime: 3, Name: "nginx"},
+		{PID: 601, PPID: 600, PGID: 600, StartTime: 4, Name: "nginx"},
+		{PID: 602, PPID: 600, PGID: 600, StartTime: 5, Name: "nginx"},
+		{PID: 603, PPID: 1, PGID: 600, StartTime: 6, Name: "orphan"},
+		{PID: 30, PPID: 5, PGID: 30, StartTime: 20, Name: "portpin"},
+		{PID: 5, PPID: 1, PGID: 5, SessionLeader: true, StartTime: 2, Name: "tmux"},
+	}
+	got, err := GroupMembers(table, model.ProcMeta{PID: 600, StartTime: 3}, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []uint32{600, 601, 602}; !slices.Equal(pids(got), want) {
+		t.Fatalf("members = %v, want %v", pids(got), want)
+	}
+}
+
+func TestGroupMembersSkipsDaemonsInTheGroup(t *testing.T) {
+	table := []ProcEntry{
+		{PID: 1, PPID: 0, PGID: 1, SessionLeader: true, StartTime: 1, Name: "init"},
+		{PID: 10, PPID: 5, PGID: 10, SessionLeader: true, StartTime: 5, Name: "zsh"},
+		{PID: 20, PPID: 10, PGID: 20, StartTime: 10, Name: "npm"},
+		{PID: 22, PPID: 20, PGID: 20, StartTime: 12, Name: "node"},
+		{PID: 25, PPID: 1, PGID: 20, StartTime: 13, Name: "orphan"},
+		{PID: 26, PPID: 1, PGID: 20, SessionLeader: true, StartTime: 14, Name: "stray"},
+		{PID: 30, PPID: 10, PGID: 30, StartTime: 20, Name: "portpin"},
+		{PID: 5, PPID: 1, PGID: 5, SessionLeader: true, StartTime: 2, Name: "tmux"},
+	}
+	got, err := GroupMembers(table, model.ProcMeta{PID: 22, StartTime: 12}, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []uint32{20, 22}; !slices.Equal(pids(got), want) {
+		t.Fatalf("members = %v, want %v", pids(got), want)
+	}
+}
+
+func TestGroupMembersLeaderGone(t *testing.T) {
+	table := []ProcEntry{
+		{PID: 1, PPID: 0, PGID: 1, SessionLeader: true, StartTime: 1, Name: "init"},
+		{PID: 41, PPID: 40, PGID: 40, StartTime: 4, Name: "a"},
+		{PID: 42, PPID: 41, PGID: 40, StartTime: 5, Name: "b"},
+		{PID: 30, PPID: 5, PGID: 30, StartTime: 20, Name: "portpin"},
+		{PID: 5, PPID: 1, PGID: 5, SessionLeader: true, StartTime: 2, Name: "tmux"},
+	}
+	got, err := GroupMembers(table, model.ProcMeta{PID: 42, StartTime: 5}, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []uint32{41, 42}; !slices.Equal(pids(got), want) {
+		t.Fatalf("members = %v, want %v", pids(got), want)
+	}
+}
