@@ -8,7 +8,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/sv222/portpin.svg)](https://pkg.go.dev/github.com/sv222/portpin)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Find and kill the process holding a TCP or UDP port, on Windows and Linux.
+Find and kill the process holding a TCP or UDP port, on Linux, macOS and Windows.
 Clears `address already in use` without losing your data.
 
 `lsof -ti :8080 | xargs kill -9` works until it doesn't. When it doesn't, it
@@ -28,8 +28,9 @@ belongs to something else. portpin is the tool for that case.
 **Race-free PID pinning.** On Linux portpin opens a `pidfd`, which reserves the
 PID, and verifies the process start time before and after checking the socket.
 On Windows it holds a process handle, which the NT kernel will not recycle, and
-re-checks the creation time before every signal. No signal is ever sent to a
-bare PID that could have been reused.
+re-checks the creation time before every signal. On macOS it watches the
+process with a kqueue exit event and re-checks the start time before every
+signal. No signal is ever sent to a bare PID that could have been reused.
 
 **Endpoint disambiguation.** Two processes can hold the same port on different
 addresses. Ask for the one you mean.
@@ -48,6 +49,16 @@ Download a binary from [Releases](../../releases), or:
 
 ```
 go install github.com/sv222/portpin/cmd/portpin@latest
+```
+
+Builds exist for Linux (amd64, arm64), macOS (Intel `darwin_amd64`, Apple
+Silicon `darwin_arm64`) and Windows (amd64). Building from source needs Go 1.26.
+
+On macOS the release binary is not signed or notarized, so Gatekeeper blocks a
+file downloaded with a browser. Clear the quarantine flag once:
+
+```
+xattr -d com.apple.quarantine ./portpin
 ```
 
 ## Usage
@@ -118,18 +129,26 @@ rather than only a port.
 
 ## Honest limitations
 
-- **macOS is not supported yet.** It is planned for v0.2, built against the
-  GitHub macOS runner. Shipping an untested binary would be worse than shipping
-  none.
+- **macOS pinning is weaker than on Linux and Windows.** macOS has no `pidfd`
+  and no process handle that reserves a PID. portpin watches the process with
+  a kqueue exit event and checks its start time right before each signal,
+  which leaves only a very short window between the check and the
+  signal. That is still far safer than `kill` on a bare PID.
+- **macOS discovery runs `lsof` and `netstat`** from `/usr/sbin`, so it is
+  slower than reading `/proc/net` on Linux. Without `sudo`, `lsof`
+  only sees your own processes: a port held by another user or by root is
+  reported as permission denied (exit 5), not as free.
+- **On macOS the `TIME_WAIT` message does not say how long the drain takes.**
+  The exit code is still 2.
 - **Windows graceful stop is best-effort.** `GenerateConsoleCtrlEvent` is
   console-wide rather than per-process, and a process started detached or with
   no window has no console to attach to. In that case portpin waits briefly and
   then calls `TerminateProcess`. Win32 offers nothing better.
 - **Linux discovery reads `/proc/net`**, which costs roughly 20-40 ms - the same
   as `lsof`. A netlink resolver is planned for v0.3.
-- **Process-tree teardown (`--group`) is not in v0.1.** Killing a supervised
-  worker still lets its supervisor respawn it. That lands in v0.2 with a guard
-  that refuses to take down your shell.
+- **Process-tree teardown (`--group`) is not supported yet.** Killing a
+  supervised worker still lets its supervisor respawn it. It is planned, with a
+  guard that refuses to take down your shell.
 - **Windows: split stdout/stderr redirection can misroute output.** If stdout is
   a real terminal and stderr alone is redirected to a file (or the reverse), the
   console detach/reattach the graceful stop needs can send output to the wrong
@@ -147,6 +166,12 @@ a graceful stop, then force-kills if it does not exit in time.
 Same command, `portpin 8080`. portpin reads `/proc/net`, pins the process
 with a `pidfd` so it can never signal a reused PID, then sends `SIGTERM`
 before `SIGKILL`.
+
+**How do I kill the process on a port on macOS?**
+Same command, `portpin 8080`. portpin reads the socket table with `netstat`,
+finds the owner with `lsof`, checks the process start time right before each
+signal, then sends `SIGTERM` before `SIGKILL`. Use `sudo portpin 8080` when the
+port belongs to another user or to root.
 
 **portpin says the port is in `TIME_WAIT` and refuses to kill anything. Why?**
 `TIME_WAIT` has no owning process; the kernel is draining the connection on
