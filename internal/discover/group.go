@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/sv222/portpin/internal/model"
 )
@@ -14,6 +15,38 @@ type ProcEntry struct {
 	PGID      uint32
 	StartTime uint64
 	Name      string
+	Cmdline   string
+}
+
+var hosts = map[string]bool{
+	"[system process]": true, "system": true, "smss.exe": true, "csrss.exe": true,
+	"wininit.exe": true, "winlogon.exe": true, "services.exe": true, "svchost.exe": true,
+	"explorer.exe": true, "conhost.exe": true, "openconsole.exe": true, "windowsterminal.exe": true,
+}
+
+var shells = map[string]bool{
+	"cmd.exe": true, "powershell.exe": true, "pwsh.exe": true, "bash.exe": true,
+	"sh.exe": true, "zsh.exe": true, "fish.exe": true, "nu.exe": true,
+}
+
+var oneShotFlags = map[string]bool{"/c": true, "-c": true, "-command": true, "-file": true}
+
+func IsShell(name string) bool { return shells[strings.ToLower(name)] }
+
+func boundary(e ProcEntry) bool {
+	name := strings.ToLower(e.Name)
+	if hosts[name] {
+		return true
+	}
+	if !shells[name] {
+		return false
+	}
+	for _, f := range strings.Fields(strings.ToLower(e.Cmdline)) {
+		if oneShotFlags[f] {
+			return false
+		}
+	}
+	return true
 }
 
 var ErrOwnGroup = errors.New("the group includes portpin or the shell that started it")
@@ -31,7 +64,27 @@ func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]mode
 		return []model.ProcMeta{target}, nil
 	}
 
-	in := map[uint32]ProcEntry{t.PID: t}
+	selfChain := make(map[uint32]bool)
+	for pid := self; pid != 0 && !selfChain[pid]; {
+		selfChain[pid] = true
+		e, ok := byPID[pid]
+		if !ok {
+			break
+		}
+		pid = e.PPID
+	}
+
+	root := t
+	for t.PGID == 0 {
+		p, ok := byPID[root.PPID]
+		if !ok || p.PID == root.PID || selfChain[p.PID] || boundary(p) ||
+			p.StartTime == 0 || p.StartTime > root.StartTime {
+			break
+		}
+		root = p
+	}
+
+	in := map[uint32]ProcEntry{root.PID: root}
 	if t.PGID != 0 {
 		for _, e := range table {
 			if e.PGID == t.PGID {
@@ -39,7 +92,7 @@ func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]mode
 			}
 		}
 	}
-	for queue := []ProcEntry{t}; len(queue) > 0; queue = queue[1:] {
+	for queue := []ProcEntry{root}; len(queue) > 0; queue = queue[1:] {
 		p := queue[0]
 		for _, c := range children[p.PID] {
 			if _, seen := in[c.PID]; seen || c.PID == p.PID || c.StartTime == 0 || c.StartTime < p.StartTime {
@@ -49,16 +102,10 @@ func GroupMembers(table []ProcEntry, target model.ProcMeta, self uint32) ([]mode
 			queue = append(queue, c)
 		}
 	}
-
-	for pid, hops := self, 0; pid != 0 && hops < len(table); hops++ {
-		if _, hit := in[pid]; hit {
+	for pid := range in {
+		if selfChain[pid] {
 			return nil, ErrOwnGroup
 		}
-		e, ok := byPID[pid]
-		if !ok || e.PPID == pid {
-			break
-		}
-		pid = e.PPID
 	}
 
 	depth := func(e ProcEntry) int {
