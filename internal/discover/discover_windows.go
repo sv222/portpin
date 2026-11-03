@@ -208,3 +208,25 @@ func creationTimeOfHandle(h windows.Handle) (uint64, error) {
 	}
 	return uint64(creation.HighDateTime)<<32 | uint64(creation.LowDateTime), nil
 }
+
+func ProcTable() ([]ProcEntry, error) {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = windows.CloseHandle(snap) }()
+
+	var out []ProcEntry
+	pe := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		e := ProcEntry{PID: pe.ProcessID, PPID: pe.ParentProcessID, Name: windows.UTF16ToString(pe.ExeFile[:])}
+		if st, err := ReadCreationTime(pe.ProcessID); err == nil {
+			e.StartTime = st
+		}
+		out = append(out, e)
+	}
+	if err != windows.ERROR_NO_MORE_FILES {
+		return nil, err
+	}
+	return out, nil
+}
