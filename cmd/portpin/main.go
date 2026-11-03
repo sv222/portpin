@@ -27,6 +27,8 @@ import (
 // version is overwritten at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
+var pinProcess = pin.Pin
+
 // Exit codes, fixed by the spec.
 const (
 	exitOK          = 0
@@ -371,13 +373,13 @@ func isConsole(f *os.File) bool {
 // probe re-runs discovery and asks whether this exact endpoint is still held
 // by this exact PID, or with --group by any pinned member of its group.
 func killOne(r discover.Resolver, filter model.Filter, b model.Binding, group []model.ProcMeta, opts terminate.Options) (terminate.Result, []uint32) {
-	c, err := pin.Pin(*b.Proc)
+	c, err := pinProcess(*b.Proc)
 	if err != nil {
 		return pinFailure(b.Proc.PID, err), nil
 	}
 	pids := []uint32{b.Proc.PID}
 	if len(group) > 1 {
-		gc, gp, err := pin.PinGroup(c, group, pin.Pin)
+		gc, gp, err := pin.PinGroup(c, group, pinProcess)
 		if err != nil {
 			_ = c.Close()
 			return pinFailure(b.Proc.PID, err), nil
@@ -403,9 +405,6 @@ func killOne(r discover.Resolver, filter model.Filter, b model.Binding, group []
 	res := terminate.Run(c, probe, opts)
 	if len(group) <= 1 {
 		return res, nil
-	}
-	if res.Outcome == terminate.OutcomeZombie {
-		res.Outcome = terminate.OutcomeReleased
 	}
 	return res, pids
 }
@@ -572,7 +571,11 @@ func printOutcome(b model.Binding, res terminate.Result, adv *advise.Advisory, g
 		}
 		fmt.Printf("released %s (pid %d, %s) %s\n", b.Endpoint, res.PID, name, how)
 	case terminate.OutcomeZombie:
-		fmt.Printf("released %s; pid %d (%s) is a zombie awaiting parent reaping\n", b.Endpoint, res.PID, name)
+		fmt.Printf("released %s; pid %d (%s) is a zombie awaiting parent reaping", b.Endpoint, res.PID, name)
+		if group > 1 {
+			fmt.Printf(", with %d other process(es) in its group", group-1)
+		}
+		fmt.Println()
 	case terminate.OutcomeTimeout:
 		fmt.Fprintf(os.Stderr, "timeout: %s still held by pid %d (%s) after a hard kill\n", b.Endpoint, res.PID, name)
 	case terminate.OutcomeIdentityChanged:
