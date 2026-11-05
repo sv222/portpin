@@ -82,13 +82,9 @@ func run() int {
 		return exitFailure
 	}
 
-	proto := model.TCP
-	switch strings.ToLower(f.protocol) {
-	case "tcp":
-	case "udp":
-		proto = model.UDP
-	default:
-		fmt.Fprintf(os.Stderr, "invalid --protocol %q: expected tcp or udp\n", f.protocol)
+	proto, err := parseProtocol(f.protocol)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return exitFailure
 	}
 
@@ -98,6 +94,16 @@ func run() int {
 		return exitFailure
 	}
 	return runKill(f, filter, args[0])
+}
+
+func parseProtocol(s string) (model.Protocol, error) {
+	switch strings.ToLower(s) {
+	case "tcp":
+		return model.TCP, nil
+	case "udp":
+		return model.UDP, nil
+	}
+	return 0, fmt.Errorf("invalid --protocol %q: expected tcp or udp", s)
 }
 
 func usage() {
