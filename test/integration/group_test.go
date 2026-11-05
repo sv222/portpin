@@ -10,8 +10,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sv222/portpin/internal/discover"
 	"github.com/sv222/portpin/internal/testutil"
 )
+
+// procSnapshot lists the supervisor, the worker and the supervisor's children
+// as portpin's own process table sees them, so a failed group assertion shows
+// what discovery had to work with.
+func procSnapshot(sup *testutil.Supervised) string {
+	tbl, err := discover.ProcTable()
+	if err != nil {
+		return fmt.Sprintf("process table unavailable: %v", err)
+	}
+	var sb strings.Builder
+	for _, e := range tbl {
+		if e.PID == uint32(sup.Cmd.Process.Pid) || e.PID == uint32(sup.WorkerPID) || e.PPID == uint32(sup.Cmd.Process.Pid) {
+			fmt.Fprintf(&sb, "%+v\n", e)
+		}
+	}
+	return sb.String()
+}
 
 func TestGroupStopsSupervisorAndWorker(t *testing.T) {
 	addr := fmt.Sprintf("127.0.0.1:%d", testutil.FreePort(t))
@@ -36,7 +54,8 @@ func TestGroupStopsSupervisorAndWorker(t *testing.T) {
 	}
 	g := doc.Actions[0].Group
 	if !slices.Contains(g, uint32(sup.Cmd.Process.Pid)) || !slices.Contains(g, uint32(sup.WorkerPID)) {
-		t.Fatalf("group = %v, want supervisor %d and worker %d", g, sup.Cmd.Process.Pid, sup.WorkerPID)
+		t.Fatalf("group = %v, want supervisor %d and worker %d\nreport:\n%s\nprocess table:\n%s",
+			g, sup.Cmd.Process.Pid, sup.WorkerPID, out, procSnapshot(sup))
 	}
 
 	exited := make(chan struct{})
