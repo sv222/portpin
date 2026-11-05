@@ -80,6 +80,8 @@ portpin --dry-run 5432       # look, change nothing
 portpin --group 3000         # also stop the supervisor that would respawn it
 portpin -j 8080              # JSON output
 portpin list -j              # every listener, as JSON
+portpin wait 3000            # block until port 3000 is free
+portpin wait --busy 3000     # block until something listens on it
 ```
 
 | Flag | Meaning |
@@ -92,6 +94,29 @@ portpin list -j              # every listener, as JSON
 | `-y, --yes` | no prompts |
 | `-g, --group` | also stop the target's process group and descendants |
 | `-j, --json` | machine-readable output |
+
+## Waiting for a port
+
+`portpin wait` blocks until a port reaches the state a script needs, so you can
+drop the `sleep 5` after a restart.
+
+```
+portpin 3000                            # release it first
+portpin wait 3000                       # free: nothing holds it, TIME_WAIT included
+portpin wait --busy --timeout 60s 3000  # in use: a live socket, TIME_WAIT excluded
+```
+
+| Flag | Meaning |
+|---|---|
+| `-i, --ip` | bind-address filter when the target is a bare port |
+| `--protocol` | `tcp` or `udp` (default `tcp`) |
+| `--timeout` | give up after this long, such as `500ms` or `2m`; `0` waits forever (default `30s`) |
+| `--free` | wait until the port is free (the default) |
+| `--busy` | wait until a process holds the port |
+
+It exits 0 once the port has the requested state, 4 on timeout and 1 on any
+other failure. It polls every 100 ms and works the same on Linux, macOS and
+Windows.
 
 ## Common cases
 
@@ -212,7 +237,7 @@ types.
 | 1 | general failure |
 | 2 | `TIME_WAIT`: the kernel owns it, nothing to signal |
 | 3 | the PID changed identity mid-teardown; nothing was signalled |
-| 4 | timeout: still held after the hard kill |
+| 4 | timeout: still held after the hard kill, or `wait` ran out of time |
 | 5 | permission denied |
 | 6 | `--group` refused: the group is not safe to stop, nothing was signalled |
 
