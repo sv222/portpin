@@ -55,6 +55,9 @@ type flags struct {
 func main() { os.Exit(run()) }
 
 func run() int {
+	if len(os.Args) > 1 && os.Args[1] == "wait" {
+		return runWait(os.Args[2:])
+	}
 	var f flags
 	pflag.StringVarP(&f.ip, "ip", "i", "", "bind-address filter when TARGET is a bare port")
 	pflag.StringVar(&f.protocol, "protocol", "tcp", "transport protocol: tcp or udp")
@@ -112,6 +115,7 @@ func usage() {
 Usage:
   portpin [OPTIONS] <TARGET>
   portpin list [OPTIONS]
+  portpin wait [OPTIONS] <TARGET>
 
 Arguments:
   TARGET   8080 | 127.0.0.1:8080 | [::1]:8080 | 0.0.0.0:8080
