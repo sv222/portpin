@@ -235,3 +235,14 @@ func TestGroupFailureExitCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestParseProtocol(t *testing.T) {
+	for in, want := range map[string]model.Protocol{"tcp": model.TCP, "UDP": model.UDP} {
+		if got, err := parseProtocol(in); err != nil || got != want {
+			t.Errorf("parseProtocol(%q) = %v, %v", in, got, err)
+		}
+	}
+	if _, err := parseProtocol("icmp"); err == nil {
+		t.Error("parseProtocol(icmp) succeeded")
+	}
+}
