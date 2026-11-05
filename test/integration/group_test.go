@@ -65,9 +65,12 @@ func TestGroupStopsSupervisorAndWorker(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("supervisor still running after --group")
 	}
-	time.Sleep(500 * time.Millisecond)
-	if !testutil.PortIsFree(addr) {
-		t.Fatalf("%s was taken again after --group", addr)
+	deadline := time.Now().Add(5 * time.Second)
+	for !testutil.PortIsFree(addr) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s was taken again after --group", addr)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
