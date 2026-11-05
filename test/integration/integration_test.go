@@ -229,3 +229,58 @@ func TestListShowsTheListener(t *testing.T) {
 		t.Fatalf("list output does not mention port %d:\n%s", port, out)
 	}
 }
+
+// startPortpin launches the binary without waiting; the returned function
+// blocks until it exits and reports its exit code and output.
+func startPortpin(t *testing.T, args ...string) func() (int, string) {
+	t.Helper()
+	cmd := exec.Command(testutil.BuildBinary(t), args...)
+	var buf strings.Builder
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting portpin failed: %v", err)
+	}
+	return func() (int, string) {
+		err := cmd.Wait()
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode(), buf.String()
+		}
+		if err != nil {
+			t.Fatalf("running portpin failed: %v\n%s", err, buf.String())
+		}
+		return 0, buf.String()
+	}
+}
+
+func TestWaitFreeReturnsOnceListenerStops(t *testing.T) {
+	addr := fmt.Sprintf("127.0.0.1:%d", testutil.FreePort(t))
+	l := testutil.StartListener(t, addr)
+
+	wait := startPortpin(t, "wait", "--timeout", "10s", addr)
+	time.Sleep(500 * time.Millisecond)
+	_ = l.Cmd.Process.Kill()
+	if code, out := wait(); code != 0 {
+		t.Fatalf("exit code = %d, want 0\n%s", code, out)
+	}
+}
+
+func TestWaitBusyReturnsOnceListenerStarts(t *testing.T) {
+	addr := fmt.Sprintf("127.0.0.1:%d", testutil.FreePort(t))
+
+	wait := startPortpin(t, "wait", "--busy", "--timeout", "10s", addr)
+	time.Sleep(500 * time.Millisecond)
+	testutil.StartListener(t, addr)
+	if code, out := wait(); code != 0 {
+		t.Fatalf("exit code = %d, want 0\n%s", code, out)
+	}
+}
+
+func TestWaitTimesOutWithExitFour(t *testing.T) {
+	addr := fmt.Sprintf("127.0.0.1:%d", testutil.FreePort(t))
+	testutil.StartListener(t, addr)
+
+	code, out := runPortpin(t, "wait", "--timeout", "300ms", addr)
+	if code != 4 {
+		t.Fatalf("exit code = %d, want 4\n%s", code, out)
+	}
+}
