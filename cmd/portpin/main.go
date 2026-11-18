@@ -104,13 +104,15 @@ func run() int {
 	f.ipSet = m.fs.Changed("ip")
 
 	if f.version {
-		fmt.Println("portpin", version)
-		return exitOK
+		return runVersion()
 	}
 
 	args := m.fs.Args()
 	if len(args) == 1 && args[0] == "list" {
 		return runList(f)
+	}
+	if len(args) == 1 && args[0] == "version" {
+		return runVersion()
 	}
 	if len(args) != 1 {
 		usage(m.fs)
@@ -148,6 +150,7 @@ Usage:
   portpin [OPTIONS] <TARGET>
   portpin list [--protocol tcp|udp] [--ip ADDR]
   portpin wait [OPTIONS] <TARGET>
+  portpin version
 
 Arguments:
   TARGET   8080 | 127.0.0.1:8080 | [::1]:8080 | 0.0.0.0:8080
