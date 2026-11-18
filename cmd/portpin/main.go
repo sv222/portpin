@@ -52,36 +52,61 @@ type flags struct {
 	version  bool
 }
 
+// mainFlags pairs the parsed values with the flag set they came from.
+type mainFlags struct {
+	flags
+	fs *pflag.FlagSet
+}
+
+// newMainFlags builds the top-level flag set. A fresh set per run keeps
+// repeated invocations - the tests included - independent, and
+// pflag.ContinueOnError lets run() decide what a parse error means: --help
+// exits 0, an unknown flag exits 1, and nothing exits the process from
+// inside pflag.
+func newMainFlags() *mainFlags {
+	m := &mainFlags{fs: pflag.NewFlagSet("portpin", pflag.ContinueOnError)}
+	f := &m.flags
+	fs := m.fs
+	fs.StringVarP(&f.ip, "ip", "i", "", "bind-address filter when TARGET is a bare port")
+	fs.StringVar(&f.protocol, "protocol", "tcp", "transport protocol: tcp or udp")
+	fs.BoolVarP(&f.force, "force", "f", false, "skip the graceful stage and hard-kill immediately")
+	fs.BoolVarP(&f.dryRun, "dry-run", "d", false, "inspect and report; change nothing")
+	fs.IntVarP(&f.timeout, "timeout", "t", 3000, "graceful wait budget in milliseconds")
+	fs.BoolVarP(&f.yes, "yes", "y", false, "assume yes for all confirmations")
+	fs.BoolVarP(&f.group, "group", "g", false, "also stop the target's process group and descendants")
+	fs.BoolVarP(&f.jsonOut, "json", "j", false, "emit machine-readable JSON on stdout")
+	fs.BoolVarP(&f.version, "version", "V", false, "print the version and exit")
+	fs.Usage = func() { usage(fs) }
+	return m
+}
+
 func main() { os.Exit(run()) }
 
 func run() int {
 	if len(os.Args) > 1 && os.Args[1] == "wait" {
 		return runWait(os.Args[2:])
 	}
-	var f flags
-	pflag.StringVarP(&f.ip, "ip", "i", "", "bind-address filter when TARGET is a bare port")
-	pflag.StringVar(&f.protocol, "protocol", "tcp", "transport protocol: tcp or udp")
-	pflag.BoolVarP(&f.force, "force", "f", false, "skip the graceful stage and hard-kill immediately")
-	pflag.BoolVarP(&f.dryRun, "dry-run", "d", false, "inspect and report; change nothing")
-	pflag.IntVarP(&f.timeout, "timeout", "t", 3000, "graceful wait budget in milliseconds")
-	pflag.BoolVarP(&f.yes, "yes", "y", false, "assume yes for all confirmations")
-	pflag.BoolVarP(&f.group, "group", "g", false, "also stop the target's process group and descendants")
-	pflag.BoolVarP(&f.jsonOut, "json", "j", false, "emit machine-readable JSON on stdout")
-	pflag.BoolVarP(&f.version, "version", "V", false, "print the version and exit")
-	pflag.Usage = usage
-	pflag.Parse()
+	m := newMainFlags()
+	if err := m.fs.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return exitOK
+		}
+		// pflag has already printed the error and the usage; nothing to add.
+		return exitFailure
+	}
+	f := m.flags
 
 	if f.version {
 		fmt.Println("portpin", version)
 		return exitOK
 	}
 
-	args := pflag.Args()
+	args := m.fs.Args()
 	if len(args) == 1 && args[0] == "list" {
 		return runList(f)
 	}
 	if len(args) != 1 {
-		usage()
+		usage(m.fs)
 		return exitFailure
 	}
 
@@ -109,7 +134,7 @@ func parseProtocol(s string) (model.Protocol, error) {
 	return 0, fmt.Errorf("invalid --protocol %q: expected tcp or udp", s)
 }
 
-func usage() {
+func usage(fs *pflag.FlagSet) {
 	fmt.Fprint(os.Stderr, `portpin - release a network endpoint safely
 
 Usage:
@@ -122,7 +147,7 @@ Arguments:
 
 Options:
 `)
-	pflag.PrintDefaults()
+	fs.PrintDefaults()
 	fmt.Fprint(os.Stderr, `
 Exit codes:
   0  endpoint released, or --dry-run completed, or the port was already free
