@@ -76,24 +76,29 @@ portpin 127.0.0.1:8080       # only loopback
 portpin '[::1]:8080'         # only IPv6 loopback
 portpin --protocol udp 5353  # UDP instead of TCP
 portpin list                 # every listener on the machine
+portpin list --protocol udp  # only UDP listeners
+portpin list --ip 127.0.0.1  # only sockets bound to 127.0.0.1
 portpin --dry-run 5432       # look, change nothing
 portpin --group 3000         # also stop the supervisor that would respawn it
 portpin -j 8080              # JSON output
 portpin list -j              # every listener, as JSON
 portpin wait 3000            # block until port 3000 is free
 portpin wait --busy 3000     # block until something listens on it
+portpin version              # print the version
 ```
 
 | Flag | Meaning |
 |---|---|
-| `-i, --ip` | bind-address filter when the target is a bare port |
-| `--protocol` | `tcp` or `udp` (default `tcp`) |
+| `-i, --ip` | bind-address filter when the target is a bare port; with `list`, keeps only sockets bound to that address |
+| `--protocol` | `tcp` or `udp` (default `tcp`); with `list`, keeps only that protocol |
 | `-f, --force` | skip the graceful stage |
 | `-d, --dry-run` | inspect only |
 | `-t, --timeout` | graceful budget in ms (default 3000) |
 | `-y, --yes` | no prompts |
 | `-g, --group` | also stop the target's process group and descendants |
 | `-j, --json` | machine-readable output |
+
+`--help` (or `-h`) prints the usage and exits 0; an unknown flag exits 1.
 
 ## Waiting for a port
 
