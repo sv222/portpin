@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -50,6 +51,10 @@ type flags struct {
 	group    bool
 	jsonOut  bool
 	version  bool
+	// Set when the flag was given explicitly. Without them, list prints
+	// every listener rather than defaulting to TCP on any address.
+	protocolSet bool
+	ipSet       bool
 }
 
 // mainFlags pairs the parsed values with the flag set they came from.
@@ -95,6 +100,8 @@ func run() int {
 		return exitFailure
 	}
 	f := m.flags
+	f.protocolSet = m.fs.Changed("protocol")
+	f.ipSet = m.fs.Changed("ip")
 
 	if f.version {
 		fmt.Println("portpin", version)
@@ -139,7 +146,7 @@ func usage(fs *pflag.FlagSet) {
 
 Usage:
   portpin [OPTIONS] <TARGET>
-  portpin list [OPTIONS]
+  portpin list [--protocol tcp|udp] [--ip ADDR]
   portpin wait [OPTIONS] <TARGET>
 
 Arguments:
@@ -165,6 +172,27 @@ func runList(f flags) int {
 	if err != nil {
 		return fatal(f, render.Report{Target: "list"}, "discovery failed: "+err.Error())
 	}
+
+	var proto *model.Protocol
+	if f.protocolSet {
+		p, err := parseProtocol(f.protocol)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitFailure
+		}
+		proto = &p
+	}
+	var ip *netip.Addr
+	if f.ipSet {
+		a, err := netip.ParseAddr(f.ip)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid --ip %q: %v\n", f.ip, err)
+			return exitFailure
+		}
+		ip = &a
+	}
+	bindings = applyListFilters(bindings, proto, ip)
+
 	if f.jsonOut {
 		if err := render.JSON(os.Stdout, render.Report{
 			Target: "list", Bindings: bindings, ExitCode: exitOK,
