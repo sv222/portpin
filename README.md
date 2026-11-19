@@ -1,7 +1,10 @@
 # PortPin
 
 <p align="center">
-  <img src="docs/logo.png" alt="PortPin logo" width="200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+    <img src="docs/logo.png" alt="PortPin logo" width="200">
+  </picture>
 </p>
 
 [![CI](https://github.com/sv222/portpin/actions/workflows/ci.yml/badge.svg)](https://github.com/sv222/portpin/actions/workflows/ci.yml)
