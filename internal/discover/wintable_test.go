@@ -32,9 +32,9 @@ func addrField(a, b, c, d byte) uint32 {
 
 func TestDecodeWinTableTCP4(t *testing.T) {
 	buf := buildTCP4([][6]uint32{
-		{2, addrField(127, 0, 0, 1), portField(8080), 0, 0, 4242},  // LISTEN
-		{8, addrField(10, 0, 0, 5), portField(9090), 0, 0, 77},     // CLOSE_WAIT
-		{11, addrField(0, 0, 0, 0), portField(7070), 0, 0, 0},      // TIME_WAIT
+		{2, addrField(127, 0, 0, 1), portField(8080), 0, 0, 4242}, // LISTEN
+		{8, addrField(10, 0, 0, 5), portField(9090), 0, 0, 77},    // CLOSE_WAIT
+		{11, addrField(0, 0, 0, 0), portField(7070), 0, 0, 0},     // TIME_WAIT
 	})
 
 	rows, err := DecodeWinTable(buf, model.TCP, false)

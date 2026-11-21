@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -513,8 +513,8 @@ func runStopContainer(f flags, filter model.Filter, rawTarget string) int {
 	}
 
 	if !f.yes {
-		fmt.Fprintln(os.Stderr, fmt.Sprintf("[i] Published by container %s (%s, image %s) via %s",
-			pick.Name, pick.ShortID(), pick.Image, pick.Engine))
+		fmt.Fprintf(os.Stderr, "[i] Published by container %s (%s, image %s) via %s\n",
+			pick.Name, pick.ShortID(), pick.Image, pick.Engine)
 		if !isConsole(os.Stdin) {
 			return fail(f, report, "confirmation required but stdin is not a terminal; re-run with --yes", exitFailure)
 		}
