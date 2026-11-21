@@ -15,6 +15,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prints every listener, as before.
 - `portpin version` prints the version, the same output as `-V/--version`.
 
+### Added
+- portpin asks the docker CLI, and podman when docker is absent or answers
+  nothing, which container publishes a port. It runs that lookup when a
+  host-to-container forwarder holds the port, or when a port is free but an
+  engine still publishes it, and at most once per run. On success it names
+  the container, the image and the engine, and prints the exact stop
+  command instead of `docker stop <container>`.
+- `--stop-container` stops the container publishing the target port through
+  the engine CLI, after a confirmation (`--yes` skips it), then waits for
+  the port to be free. It exits 0 on success, 4 when the port is still held
+  after the stop and 1 when no single container matched or the stop failed.
+  Combining it with `--group` or `--force` is a usage error.
+- `--no-engine` and `PORTPIN_NO_ENGINE=1` skip every engine call.
+- Every engine call has a hard 1.5 second timeout; a timeout, a missing
+  CLI, a non-zero exit or unparseable output never changes the exit code
+  and only adds a `Container lookup` note.
+- `list` shows the publishing container in a new column for forwarder rows.
+- JSON reports carry an optional `container` object (`engine`, `id`,
+  `name`, `image`, `ports`) on forwarder bindings and on the report for a
+  free published port, plus a `lookup_error` string when the lookup failed.
+  `docs/schema.json` documents both.
+
 ### Fixed
 - `portpin --help` and `-h` now exit with status 0 instead of 2.
 

@@ -27,6 +27,7 @@ belongs to something else. portpin is the tool for that case.
 | Tells `TIME_WAIT` from `CLOSE_WAIT` | no | no | no | **yes** |
 | Graceful stop before force | no | no | no | **yes** |
 | Warns about container proxies | no | no | no | **yes** |
+| Names the container behind the port | no | no | no | **yes** |
 | Stops the supervisor too (`--group`) | no | no | `/T`, children only | **yes** |
 
 **Race-free PID pinning.** On Linux portpin opens a `pidfd`, which reserves the
@@ -74,20 +75,21 @@ xattr -d com.apple.quarantine ./portpin
 ## Usage
 
 ```
-portpin 3000                 # any address on port 3000
-portpin 127.0.0.1:8080       # only loopback
-portpin '[::1]:8080'         # only IPv6 loopback
-portpin --protocol udp 5353  # UDP instead of TCP
-portpin list                 # every listener on the machine
-portpin list --protocol udp  # only UDP listeners
-portpin list --ip 127.0.0.1  # only sockets bound to 127.0.0.1
-portpin --dry-run 5432       # look, change nothing
-portpin --group 3000         # also stop the supervisor that would respawn it
-portpin -j 8080              # JSON output
-portpin list -j              # every listener, as JSON
-portpin wait 3000            # block until port 3000 is free
-portpin wait --busy 3000     # block until something listens on it
-portpin version              # print the version
+portpin 3000                  # any address on port 3000
+portpin 127.0.0.1:8080        # only loopback
+portpin '[::1]:8080'          # only IPv6 loopback
+portpin --protocol udp 5353   # UDP instead of TCP
+portpin list                  # every listener on the machine
+portpin list --protocol udp   # only UDP listeners
+portpin list --ip 127.0.0.1   # only sockets bound to 127.0.0.1
+portpin --dry-run 5432        # look, change nothing; names the container behind it
+portpin --stop-container 8080 # stop the container publishing 8080
+portpin --group 3000          # also stop the supervisor that would respawn it
+portpin -j 8080               # JSON output
+portpin list -j               # every listener, as JSON
+portpin wait 3000             # block until port 3000 is free
+portpin wait --busy 3000      # block until something listens on it
+portpin version               # print the version
 ```
 
 | Flag | Meaning |
@@ -99,6 +101,8 @@ portpin version              # print the version
 | `-t, --timeout` | graceful budget in ms (default 3000) |
 | `-y, --yes` | no prompts |
 | `-g, --group` | also stop the target's process group and descendants |
+| `--stop-container` | stop the container publishing the port, through the engine CLI, instead of touching the forwarder |
+| `--no-engine` | do not ask the docker or podman CLI which container publishes the port |
 | `-j, --json` | machine-readable output |
 
 `--help` (or `-h`) prints the usage and exits 0; an unknown flag exits 1.
@@ -199,6 +203,50 @@ start a replacement. Each one is pinned like the target: a member whose PID
 was reused is skipped, never signalled. portpin lists the group and asks for
 confirmation (`-y` skips it).
 
+## Containers
+
+When a port is held by a host-to-container forwarder (`docker-proxy`,
+`rootlessport`, `slirp4netns`, `com.docker.backend`, `wslhost.exe`), or when
+the port is free but a container engine still publishes it, portpin asks the
+engine CLI which container is behind it:
+
+```
+docker ps --no-trunc --filter publish=8080/tcp --format '{{json .}}'
+```
+
+`podman` gets the same query when docker is absent or answers nothing. Every
+call has a hard 1.5 second timeout and the process is killed when it passes.
+A timeout, a missing CLI, a non-zero exit or unparseable output never
+changes the exit code: portpin prints
+
+```
+[i] Container lookup: docker did not answer in 1.5s
+```
+
+and falls back to the generic `docker stop <container>` hint. Run
+`--no-engine`, or set `PORTPIN_NO_ENGINE=1`, to skip the engine entirely.
+
+When the lookup succeeds, portpin names the container and the exact command:
+
+```
+[i] Published by container web-1 (3f2a9c1b0d4e, image nginx:1.27) via docker
+[i] Try instead: docker stop web-1
+```
+
+`--stop-container` closes the loop. It stops that container through the
+engine (`docker stop <id>`, with a 30 second timeout), then waits for the
+port to be free with the `--timeout` budget. It prints the container and
+asks `Stop container web-1 (docker)? [y/N]`; `--yes` skips the prompt, and
+without a terminal it refuses unless `--yes` is given. Combining it with
+`--group` or `--force` is a usage error. With `--dry-run` it only prints
+what it would run. It exits 0 when the port is free, 4 when the port is
+still held after the stop, and 1 when the lookup found no clear single
+container or the engine stop failed.
+
+Several containers can publish the same port on different addresses. The
+listing shows them all; the stop command names the one that matches the
+target address and protocol, or none when the answer is unclear.
+
 ## JSON output
 
 `-j` prints one JSON object on stdout, for `list` and for a kill alike. The
@@ -231,6 +279,10 @@ types.
 | `bindings` | every matching socket, one entry per socket |
 | `bindings[].state` | `LISTEN`, `ESTABLISHED`, `CLOSE_WAIT`, `TIME_WAIT` or `OTHER` |
 | `bindings[].proc` | the owner; absent for `TIME_WAIT` and for owners you cannot inspect |
+| `bindings[].container` | on a forwarder row, the container publishing the endpoint: `engine`, `id`, `name`, `image`, `ports` |
+| `bindings[].lookup_error` | why the engine lookup produced no answer for this row |
+| `container` | on a free port that an engine still publishes, the container behind it |
+| `lookup_error` | why the engine lookup produced no answer |
 | `actions` | one entry per process acted on; empty for `list` |
 | `actions[].outcome` | `released`, `zombie` (port free, process waiting to be reaped; also with `--group`), `timeout`, `identity-changed`, `permission-denied`, `error` or `dry-run` |
 | `actions[].group` | with `--group`, the PIDs signalled, in order |
@@ -251,6 +303,11 @@ types.
 
 ## Honest limitations
 
+- **The container lookup is tested against real docker on Linux only.**
+  Windows and macOS run the same code paths but were exercised with a fake
+  runner in unit tests only, never against a real `docker` or `podman` CLI
+  on those systems. The 1.5 second timeout and the never-fail fallback hold
+  everywhere; the exact engine output may differ.
 - **macOS pinning is weaker than on Linux and Windows.** macOS has no `pidfd`
   and no process handle that reserves a PID. portpin watches the process with
   a kqueue exit event and checks its start time right before each signal,
@@ -325,11 +382,13 @@ between host and container (`docker-proxy`, `rootlessport`, `slirp4netns`,
 `com.docker.backend`, `wslhost.exe`) rather than your own program. portpin
 recognises all of those and refuses to kill one without an explicit
 confirmation, because cutting the forwarder leaves the container running and
-the daemon puts the port straight back. It prints the forwarding it found
-(`:8080 -> 172.17.0.2:80`) and points you at `docker stop <container>`
-instead. Start with `portpin --dry-run 8080` to see the owner. None of this
-opens the Docker socket, which matters when the reason you are chasing a port
-is that the daemon itself is hung.
+the daemon puts the port straight back. When the docker or podman CLI is
+installed, portpin asks it which container publishes the port, names it and
+prints the exact stop command; `--stop-container` runs that stop for you
+after a confirmation. portpin never opens the engine socket itself: it may
+run the docker or podman CLI with a hard 1.5 second timeout, and
+`--no-engine` turns that off, so a hung daemon cannot hang portpin either
+way. Start with `portpin --dry-run 8080` to see the owner.
 
 **How is this different from `npx kill-port` or `taskkill /F`?**
 Same goal, stronger guarantee: portpin pins the target by its start time
