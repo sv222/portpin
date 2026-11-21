@@ -2,9 +2,10 @@
 // killed directly.
 //
 // Everything here is derived from the process name and command line already
-// captured at discovery. No container daemon socket is ever opened: a hung
-// daemon is one of the common reasons to run portpin, and connecting to it
-// would reintroduce exactly the blocking hazard the tool exists to avoid.
+// captured at discovery, plus the optional engine lookup the caller ran once.
+// No container daemon socket is ever opened: a hung daemon is one of the
+// common reasons to run portpin, and connecting to it would reintroduce
+// exactly the blocking hazard the tool exists to avoid.
 package advise
 
 import (
@@ -30,8 +31,18 @@ var forwarders = []string{
 	"com.docker.backend",
 }
 
+// IsForwarder reports whether m is a host-to-container port forwarder.
+func IsForwarder(m model.ProcMeta) bool { return matchForwarder(m) != "" }
+
 // ForProcess returns an advisory for m, or nil when m is an ordinary process.
-func ForProcess(m model.ProcMeta) *Advisory {
+//
+// matches carries the containers the engine lookup found publishing the
+// port and pick the one portpin would name in the stop command; both come
+// from engine.MatchList and engine.MatchFor and are nil or empty when the
+// lookup did not run or found nothing. lookupErr is the lookup failure
+// note. Without a container the advisory keeps the docker stop <container>
+// placeholder, and the exit code of the run never changes.
+func ForProcess(m model.ProcMeta, matches []model.Container, pick *model.Container, lookupErr string) *Advisory {
 	name := matchForwarder(m)
 	if name == "" {
 		return nil
@@ -43,11 +54,48 @@ func ForProcess(m model.ProcMeta) *Advisory {
 	if hostPort, containerIP, containerPort := parseDockerProxyFlags(m.Cmdline); containerIP != "" && containerPort != "" {
 		lines = append(lines, fmt.Sprintf("[i] Forwarding :%s -> %s:%s", hostPort, containerIP, containerPort))
 	}
-	lines = append(lines,
-		"[!] Killing it severs port forwarding; the backing container keeps running.",
-		"[i] Try instead: docker stop <container>",
-	)
+	lines = append(lines, "[!] Killing it severs port forwarding; the backing container keeps running.")
+	lines = append(lines, containerLines(matches, pick, lookupErr, true)...)
 	return &Advisory{Kind: "container-proxy", Lines: lines}
+}
+
+// ForFreePort returns the advisory for a port with no host-side owner that
+// the engine still publishes into a container, which is what Docker with
+// userland-proxy turned off and Docker Desktop VMs look like. Unlike the
+// forwarder advisory it stays silent rather than printing the placeholder:
+// a free port with no resolved container needs no stop command.
+func ForFreePort(matches []model.Container, pick *model.Container, lookupErr string) *Advisory {
+	lines := containerLines(matches, pick, lookupErr, false)
+	if len(lines) == 0 {
+		return nil
+	}
+	return &Advisory{Kind: "container-published", Lines: lines}
+}
+
+// containerLines builds the lookup part of both advisories: one line per
+// container found, the failure note, and the stop command to run. With
+// placeholder the unmatched case still ends with the docker stop <container>
+// line, which is what the forwarder advisory has always shown.
+func containerLines(matches []model.Container, pick *model.Container, lookupErr string, placeholder bool) []string {
+	var lines []string
+	for _, c := range matches {
+		lines = append(lines, fmt.Sprintf("[i] Published by container %s (%s, image %s) via %s", c.Name, c.ShortID(), c.Image, c.Engine))
+	}
+	if len(matches) == 0 {
+		if lookupErr != "" {
+			lines = append(lines, "[i] Container lookup: "+lookupErr)
+		}
+		if placeholder {
+			lines = append(lines, "[i] Try instead: docker stop <container>")
+		}
+		return lines
+	}
+	if pick != nil {
+		lines = append(lines, fmt.Sprintf("[i] Try instead: %s stop %s", pick.Engine, pick.Name))
+	} else {
+		lines = append(lines, "[i] Stop the container you mean: docker stop <container>")
+	}
+	return lines
 }
 
 // matchForwarder returns the canonical forwarder name, or "" for no match.

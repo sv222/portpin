@@ -248,7 +248,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	advisories := make(map[uint32]*advise.Advisory, len(targets))
 	needConfirm := len(targets) > 1
 	for _, b := range targets {
-		if a := advise.ForProcess(*b.Proc); a != nil {
+		if a := advise.ForProcess(*b.Proc, nil, nil, ""); a != nil {
 			advisories[b.Proc.PID] = a
 			needConfirm = true
 		}
