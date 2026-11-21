@@ -1,0 +1,22 @@
+[
+  {
+    "Command": "nginx -g daemon off;",
+    "CreatedAt": "2026-11-21 19:10:58 +0000 UTC",
+    "ID": "8b1f0a2c9d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a",
+    "Image": "nginx:1.27",
+    "Names": "web-1",
+    "Ports": "0.0.0.0:18080->80/tcp, [::]:18080->80/tcp",
+    "State": "running",
+    "Status": "Up 2 minutes"
+  },
+  {
+    "Command": "redis-server",
+    "CreatedAt": "2026-11-21 19:11:20 +0000 UTC",
+    "ID": "4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d",
+    "Image": "docker.io/library/redis:7",
+    "Names": "cache-1",
+    "Ports": "127.0.0.1:16379->6379/tcp",
+    "State": "running",
+    "Status": "Up 30 seconds"
+  }
+]

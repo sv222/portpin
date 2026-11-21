@@ -78,6 +78,26 @@ type ProcMeta struct {
 	StartTime uint64   `json:"-"`
 }
 
+// Container describes the container publishing an endpoint, as reported by
+// the docker or podman CLI. It is attached to forwarder rows and, on the
+// report itself, when a free port is still published into a container.
+type Container struct {
+	Engine string `json:"engine"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	Ports  string `json:"ports"`
+}
+
+// ShortID returns the 12-character form of the container ID, the shape the
+// docker and podman CLIs print by default.
+func (c Container) ShortID() string {
+	if len(c.ID) > 12 {
+		return c.ID[:12]
+	}
+	return c.ID
+}
+
 // Binding is one socket found on the system.
 // Proc is nil when the socket has no owning process, which is the case for
 // TIME_WAIT rows and for processes the caller may not inspect.
@@ -87,6 +107,12 @@ type Binding struct {
 	State    SocketState    `json:"state"`
 	Inode    uint64         `json:"inode,omitempty"` // Linux only; 0 elsewhere
 	Proc     *ProcMeta      `json:"proc,omitempty"`
+	// Container is the container publishing this endpoint, set only on
+	// forwarder rows when the engine lookup resolved it.
+	Container *Container `json:"container,omitempty"`
+	// LookupError is the reason the engine lookup produced no answer for
+	// this row; empty when the lookup succeeded or never ran.
+	LookupError string `json:"lookup_error,omitempty"`
 }
 
 // IsKernelOwned reports whether the socket is genuinely kernel-owned with
