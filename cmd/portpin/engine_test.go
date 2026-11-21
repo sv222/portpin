@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/netip"
+	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +21,23 @@ type fakeEngine struct {
 	stdout string
 	stderr string
 	err    error
+	// perCall replays one canned answer per Run, in order, and falls back to
+	// the plain stdout/stderr/err fields once exhausted.
+	perCall []fakeResult
+}
+
+type fakeResult struct {
+	stdout, stderr string
+	err            error
 }
 
 func (f *fakeEngine) Run(argv []string, timeout time.Duration) (string, string, error) {
 	f.calls = append(f.calls, argv)
+	if len(f.perCall) > 0 {
+		r := f.perCall[0]
+		f.perCall = f.perCall[1:]
+		return r.stdout, r.stderr, r.err
+	}
 	return f.stdout, f.stderr, f.err
 }
 
@@ -227,4 +243,21 @@ func TestEmitFreeSkipsTheEngineWhenDisabled(t *testing.T) {
 	if strings.Contains(out, "Container lookup") {
 		t.Fatalf("disabled engine must produce no lookup output:\n%s", out)
 	}
+}
+
+// realExitOne returns a genuine exec.ExitError with exit code 1, the shape a
+// Runner passes through for a failing engine CLI.
+func realExitOne() *exec.ExitError {
+	var ee *exec.ExitError
+	parts := failArgs("engine-fail")
+	_, err := exec.Command(parts[0], parts[1:]...).CombinedOutput()
+	errors.As(err, &ee)
+	return ee
+}
+
+func failArgs(s string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "echo " + s + " 1>&2 && exit 1"}
+	}
+	return []string{"sh", "-c", "echo " + s + " >&2; exit 1"}
 }

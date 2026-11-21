@@ -47,16 +47,17 @@ const (
 )
 
 type flags struct {
-	ip       string
-	protocol string
-	force    bool
-	dryRun   bool
-	timeout  int
-	yes      bool
-	group    bool
-	jsonOut  bool
-	version  bool
-	noEngine bool
+	ip            string
+	protocol      string
+	force         bool
+	dryRun        bool
+	timeout       int
+	yes           bool
+	group         bool
+	jsonOut       bool
+	version       bool
+	noEngine      bool
+	stopContainer bool
 	// Set when the flag was given explicitly. Without them, list prints
 	// every listener rather than defaulting to TCP on any address.
 	protocolSet bool
@@ -88,6 +89,7 @@ func newMainFlags() *mainFlags {
 	fs.BoolVarP(&f.jsonOut, "json", "j", false, "emit machine-readable JSON on stdout")
 	fs.BoolVarP(&f.version, "version", "V", false, "print the version and exit")
 	fs.BoolVar(&f.noEngine, "no-engine", false, "do not query the docker or podman CLI for the container behind a port")
+	fs.BoolVar(&f.stopContainer, "stop-container", false, "stop the container publishing the target port, after a confirmation")
 	fs.Usage = func() { usage(fs) }
 	return m
 }
@@ -150,6 +152,13 @@ func run() int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return exitFailure
+	}
+	if f.stopContainer {
+		if msg := stopContainerUsageError(f); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+			return exitFailure
+		}
+		return runStopContainer(f, filter, args[0])
 	}
 	return runKill(f, filter, args[0])
 }
@@ -454,6 +463,99 @@ func lookupErrOf(lk *engine.Lookup) string {
 		return ""
 	}
 	return lk.Error
+}
+
+// stopTimeout is the hard limit for one engine stop command. The process is
+// killed when it passes.
+const stopTimeout = 30 * time.Second
+
+// stopContainerUsageError returns the usage error message for a
+// --stop-container invocation, or "" when the flag combination is valid.
+func stopContainerUsageError(f flags) string {
+	if f.group || f.force {
+		return "--stop-container cannot be combined with --group or --force"
+	}
+	if f.noEngine {
+		return "--stop-container needs the engine lookup; drop --no-engine"
+	}
+	if f.timeout < 0 {
+		return "invalid --timeout: must not be negative"
+	}
+	return ""
+}
+
+// runStopContainer stops the container publishing the target port through
+// the engine CLI, asks for confirmation first, and then waits for the port
+// to become free with the same logic as wait --free and the --timeout
+// budget. It never signals the forwarder process itself.
+func runStopContainer(f flags, filter model.Filter, rawTarget string) int {
+	report := render.Report{Target: rawTarget}
+
+	lk := engine.LookupByPort(engineRunner, filter.Port, filter.Protocol.String())
+	if lk.Error != "" {
+		return fail(f, report, "container lookup failed: "+lk.Error, exitFailure)
+	}
+	matches := engine.MatchList(lk, filter.Port, filter.Protocol.String(), filter.IP)
+	pick := engine.MatchFor(lk, filter.Port, filter.Protocol.String(), filter.IP)
+	switch {
+	case len(matches) == 0:
+		return fail(f, report, fmt.Sprintf("no container publishes port %d/%s", filter.Port, filter.Protocol), exitFailure)
+	case pick == nil:
+		return fail(f, report, fmt.Sprintf("%d containers publish port %d; list them with portpin --dry-run %d", len(matches), filter.Port, filter.Port), exitFailure)
+	}
+
+	report.Container = pick
+
+	if f.dryRun {
+		report.ExitCode = exitOK
+		emit(f, report, fmt.Sprintf("would run: %s stop %s", pick.Engine, pick.ID))
+		return exitOK
+	}
+
+	if !f.yes {
+		fmt.Fprintln(os.Stderr, fmt.Sprintf("[i] Published by container %s (%s, image %s) via %s",
+			pick.Name, pick.ShortID(), pick.Image, pick.Engine))
+		if !isConsole(os.Stdin) {
+			return fail(f, report, "confirmation required but stdin is not a terminal; re-run with --yes", exitFailure)
+		}
+		if !readYesNo(fmt.Sprintf("Stop container %s (%s)? [y/N] ", pick.Name, pick.Engine)) {
+			report.ExitCode = exitFailure
+			emit(f, report, "aborted")
+			return exitFailure
+		}
+	}
+
+	_, stderr, err := engineRunner.Run([]string{pick.Engine, "stop", pick.ID}, stopTimeout)
+	if err != nil {
+		msg := fmt.Sprintf("%s stop failed", pick.Engine)
+		if s := strings.TrimSpace(stderr); s != "" {
+			msg += ": " + s
+		}
+		return fail(f, report, msg, exitFailure)
+	}
+
+	free, err := waitFor(discover.New(), filter, false, time.Duration(f.timeout)*time.Millisecond, waitPoll)
+	if err != nil {
+		return fatal(f, report, "discovery failed: "+err.Error())
+	}
+	if !free {
+		return fail(f, report, fmt.Sprintf("port %d is still held after stopping container %s", filter.Port, pick.Name), exitTimeout)
+	}
+	report.ExitCode = exitOK
+	emit(f, report, fmt.Sprintf("stopped container %s (%s); port %d is free", pick.Name, pick.Engine, filter.Port))
+	return exitOK
+}
+
+// readYesNo prints the prompt on stderr and reads a yes or no answer from
+// stdin. Anything but y or yes is a no.
+func readYesNo(prompt string) bool {
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }
 
 // consoleOutputWorkaround captures os.Stdout/os.Stderr into memory for the
