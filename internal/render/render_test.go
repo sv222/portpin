@@ -193,3 +193,89 @@ func TestJSONKeepsEverySocket(t *testing.T) {
 			len(got.Bindings), len(bs))
 	}
 }
+
+func TestJSONContainerFields(t *testing.T) {
+	c := &model.Container{Engine: "docker", ID: "a92f8e7e9ec3", Name: "web-1", Image: "nginx:1.27", Ports: "0.0.0.0:8080->80/tcp"}
+	r := Report{
+		Target: "8080",
+		Bindings: []model.Binding{{
+			Endpoint:  netip.MustParseAddrPort("0.0.0.0:8080"),
+			Protocol:  model.TCP,
+			State:     model.StateListen,
+			Proc:      &model.ProcMeta{PID: 10, Name: "docker-proxy"},
+			Container: c,
+		}},
+		ExitCode:  0,
+		Container: c,
+	}
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if _, ok := got["lookup_error"]; ok {
+		t.Error("lookup_error must be absent when the lookup succeeded")
+	}
+	row := got["bindings"].([]any)[0].(map[string]any)
+	cRow, ok := row["container"].(map[string]any)
+	if !ok {
+		t.Fatalf("binding row has no container object: %v", row)
+	}
+	if cRow["engine"] != "docker" || cRow["name"] != "web-1" || cRow["image"] != "nginx:1.27" {
+		t.Errorf("container row = %v", cRow)
+	}
+	if cRow["ports"] != "0.0.0.0:8080->80/tcp" {
+		t.Errorf("ports = %v, want the CLI form", cRow["ports"])
+	}
+	if _, ok := got["container"]; !ok {
+		t.Error("report-level container missing")
+	}
+
+	empty := Report{Target: "8080", ExitCode: 0}
+	buf.Reset()
+	if err := JSON(&buf, empty); err != nil {
+		t.Fatal(err)
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"container", "lookup_error"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("%q must be absent from a report without a lookup", key)
+		}
+	}
+}
+
+func TestJSONLookupErrorWithoutContainer(t *testing.T) {
+	r := Report{
+		Target: "8080",
+		Bindings: []model.Binding{{
+			Endpoint:    netip.MustParseAddrPort("0.0.0.0:8080"),
+			Protocol:    model.TCP,
+			State:       model.StateListen,
+			Proc:        &model.ProcMeta{PID: 10, Name: "docker-proxy"},
+			LookupError: "docker did not answer in 1.5s",
+		}},
+		ExitCode:    0,
+		LookupError: "docker did not answer in 1.5s",
+	}
+	var buf bytes.Buffer
+	if err := JSON(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["lookup_error"] != "docker did not answer in 1.5s" {
+		t.Errorf("lookup_error = %v", got["lookup_error"])
+	}
+	if _, ok := got["container"]; ok {
+		t.Error("container must be absent when the lookup failed")
+	}
+}

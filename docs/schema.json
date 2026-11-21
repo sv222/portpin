@@ -10,9 +10,23 @@
     "bindings": { "type": "array", "items": { "$ref": "#/$defs/binding" } },
     "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
     "exit_code": { "type": "integer", "enum": [0, 1, 2, 3, 4, 5, 6] },
-    "error": { "type": "string" }
+    "error": { "type": "string" },
+    "container": { "$ref": "#/$defs/container" },
+    "lookup_error": { "type": "string" }
   },
   "$defs": {
+    "container": {
+      "type": "object",
+      "required": ["engine", "id", "name", "image", "ports"],
+      "additionalProperties": false,
+      "properties": {
+        "engine": { "type": "string", "examples": ["docker", "podman"] },
+        "id": { "type": "string", "description": "The full container ID as printed with --no-trunc." },
+        "name": { "type": "string" },
+        "image": { "type": "string" },
+        "ports": { "type": "string", "description": "The published ports exactly as the engine CLI prints them." }
+      }
+    },
     "binding": {
       "type": "object",
       "required": ["endpoint", "protocol", "state"],
@@ -22,7 +36,9 @@
         "protocol": { "enum": ["tcp", "udp"] },
         "state": { "enum": ["LISTEN", "ESTABLISHED", "CLOSE_WAIT", "TIME_WAIT", "OTHER"] },
         "inode": { "type": "integer", "minimum": 1 },
-        "proc": { "$ref": "#/$defs/proc" }
+        "proc": { "$ref": "#/$defs/proc" },
+        "container": { "$ref": "#/$defs/container" },
+        "lookup_error": { "type": "string" }
       }
     },
     "proc": {

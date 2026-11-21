@@ -70,8 +70,15 @@ func TestJSONMatchesDocumentedSchema(t *testing.T) {
 				State:    model.StateListen,
 				Inode:    7,
 				Proc:     &model.ProcMeta{PID: 1, PPID: 2, UID: 3, User: "u", Name: "n", Cmdline: []string{"n"}},
+				Container: &model.Container{
+					Engine: "docker",
+					ID:     "a92f8e7e9ec3ac61f12098dda35cf818f5c87906d549c44989f550aa5392ebb3",
+					Name:   "web-1",
+					Image:  "nginx:1.27",
+					Ports:  "0.0.0.0:8080->80/tcp",
+				},
 			},
-			{Endpoint: netip.MustParseAddrPort("[::1]:8080"), Protocol: model.UDP, State: model.StateTimeWait},
+			{Endpoint: netip.MustParseAddrPort("[::1]:8080"), Protocol: model.UDP, State: model.StateTimeWait, LookupError: "docker did not answer in 1.5s"},
 		},
 		Actions: []Action{{
 			PID: 1, Outcome: "released", GracefulSent: true, HardKill: true, Group: []uint32{2, 1},
@@ -79,6 +86,14 @@ func TestJSONMatchesDocumentedSchema(t *testing.T) {
 		}, {PID: 2, Outcome: "dry-run"}},
 		ExitCode: 4,
 		Error:    "e",
+		Container: &model.Container{
+			Engine: "podman",
+			ID:     "8b1f0a2c9d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a",
+			Name:   "web-1",
+			Image:  "nginx:1.27",
+			Ports:  "0.0.0.0:8080->80/tcp",
+		},
+		LookupError: "",
 	}
 	var buf bytes.Buffer
 	if err := JSON(&buf, r); err != nil {

@@ -104,6 +104,13 @@ type Report struct {
 	Actions  []Action        `json:"actions"`
 	ExitCode int             `json:"exit_code"`
 	Error    string          `json:"error,omitempty"`
+	// Container is the container publishing the target port, set when the
+	// engine lookup resolved it and the run had nothing to signal, so no
+	// binding row could carry it.
+	Container *model.Container `json:"container,omitempty"`
+	// LookupError is the reason the engine lookup produced no answer; empty
+	// when the lookup succeeded or never ran.
+	LookupError string `json:"lookup_error,omitempty"`
 }
 
 // JSON writes r as a single indented JSON object followed by a newline.
