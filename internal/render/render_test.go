@@ -279,3 +279,54 @@ func TestJSONLookupErrorWithoutContainer(t *testing.T) {
 		t.Error("container must be absent when the lookup failed")
 	}
 }
+
+func TestTableContainerColumnOnlyWhenResolved(t *testing.T) {
+	c := &model.Container{Engine: "docker", ID: "a92f8e7e9ec3", Name: "web-1", Image: "nginx:1.27", Ports: "0.0.0.0:8080->80/tcp"}
+	with := []model.Binding{{
+		Endpoint:  netip.MustParseAddrPort("0.0.0.0:8080"),
+		Protocol:  model.TCP,
+		State:     model.StateListen,
+		Proc:      &model.ProcMeta{PID: 10, Name: "docker-proxy"},
+		Container: c,
+	}}
+	var buf bytes.Buffer
+	if err := Table(&buf, with); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "CONTAINER") || !strings.Contains(out, "web-1") {
+		t.Fatalf("container column missing:\n%s", out)
+	}
+
+	plain := []model.Binding{{
+		Endpoint: netip.MustParseAddrPort("127.0.0.1:8080"),
+		Protocol: model.TCP,
+		State:    model.StateListen,
+		Proc:     &model.ProcMeta{PID: 11, Name: "node"},
+	}}
+	buf.Reset()
+	if err := Table(&buf, plain); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "CONTAINER") {
+		t.Fatalf("container column must not appear without a resolved container:\n%s", buf.String())
+	}
+}
+
+func TestTableRowsWithDifferentContainersStayApart(t *testing.T) {
+	c := &model.Container{Engine: "docker", ID: "a92f8e7e9ec3", Name: "web-1", Image: "nginx:1.27"}
+	bs := []model.Binding{
+		{Endpoint: netip.MustParseAddrPort("0.0.0.0:8080"), Protocol: model.TCP, State: model.StateListen,
+			Proc: &model.ProcMeta{PID: 10, Name: "docker-proxy"}},
+		{Endpoint: netip.MustParseAddrPort("0.0.0.0:8080"), Protocol: model.TCP, State: model.StateListen,
+			Proc: &model.ProcMeta{PID: 10, Name: "docker-proxy"}, Container: c},
+	}
+	var buf bytes.Buffer
+	if err := Table(&buf, bs); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Count(out, "0.0.0.0:8080") != 2 {
+		t.Fatalf("two rows differing only in the container must not fold:\n%s", out)
+	}
+}

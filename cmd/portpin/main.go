@@ -19,6 +19,7 @@ import (
 
 	"github.com/sv222/portpin/internal/advise"
 	"github.com/sv222/portpin/internal/discover"
+	"github.com/sv222/portpin/internal/engine"
 	"github.com/sv222/portpin/internal/model"
 	"github.com/sv222/portpin/internal/pin"
 	"github.com/sv222/portpin/internal/render"
@@ -29,6 +30,10 @@ import (
 var version = "dev"
 
 var pinProcess = pin.Pin
+
+// engineRunner runs the container engine CLI. A package var so tests can
+// swap in a fake.
+var engineRunner engine.Runner = engine.CLI()
 
 // Exit codes, fixed by the spec.
 const (
@@ -196,6 +201,12 @@ func runList(f flags) int {
 	}
 	bindings = applyListFilters(bindings, proto, ip)
 
+	// One engine lookup for the whole listing, run only when a forwarder row
+	// would otherwise keep its placeholder.
+	if anyForwarder(bindings) {
+		attachEngineRows(bindings, engine.LookupAll(engineRunner))
+	}
+
 	if f.jsonOut {
 		if err := render.JSON(os.Stdout, render.Report{
 			Target: "list", Bindings: bindings, ExitCode: exitOK,
@@ -224,8 +235,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 
 	if len(bindings) == 0 {
 		report.ExitCode = exitOK
-		emit(f, report, fmt.Sprintf("port %d is free", filter.Port))
-		return exitOK
+		return emitFree(f, report, filter)
 	}
 
 	owned := ownedBindings(bindings)
@@ -244,11 +254,20 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	// must still be pinned, warned about and terminated exactly once.
 	targets := uniqueProcesses(owned)
 
+	// The engine lookup runs at most once per invocation, and only when a
+	// forwarder holds the port: that is the case where the placeholder line
+	// can be replaced by the container's name.
+	var lk *engine.Lookup
+	if anyForwarder(targets) {
+		lk = engine.LookupByPort(engineRunner, filter.Port, filter.Protocol.String())
+		attachEngineRows(report.Bindings, lk)
+	}
+
 	// Confirmation and advisories: several owners, or a container-proxy warning.
 	advisories := make(map[uint32]*advise.Advisory, len(targets))
 	needConfirm := len(targets) > 1
 	for _, b := range targets {
-		if a := advise.ForProcess(*b.Proc, nil, nil, ""); a != nil {
+		if a := advise.ForProcess(*b.Proc, matchesFor(lk, b), pickFor(lk, b), lookupErrOf(lk)); a != nil {
 			advisories[b.Proc.PID] = a
 			needConfirm = true
 		}
@@ -336,6 +355,86 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 		_ = render.JSON(os.Stdout, report)
 	}
 	return worst
+}
+
+// emitFree reports a free port and asks the engine whether a container still
+// publishes it, which is what Docker with userland-proxy turned off and
+// Docker Desktop VMs look like. In JSON the container rides on the report,
+// since there is no binding row to carry it.
+func emitFree(f flags, report render.Report, filter model.Filter) int {
+	lk := engine.LookupByPort(engineRunner, filter.Port, filter.Protocol.String())
+	matches := engine.MatchList(lk, filter.Port, filter.Protocol.String(), filter.IP)
+	pick := engine.MatchFor(lk, filter.Port, filter.Protocol.String(), filter.IP)
+	a := advise.ForFreePort(matches, pick, lookupErrOf(lk))
+	msg := fmt.Sprintf("port %d is free", filter.Port)
+	if a != nil {
+		msg += "\n" + strings.Join(a.Lines, "\n")
+	}
+	report.Container = pick
+	if lk.Error != "" {
+		report.LookupError = lk.Error
+	}
+	emit(f, report, msg)
+	return exitOK
+}
+
+// anyForwarder reports whether any binding is owned by a host-to-container
+// port forwarder.
+func anyForwarder(bs []model.Binding) bool {
+	for _, b := range bs {
+		if b.Proc != nil && advise.IsForwarder(*b.Proc) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesFor returns the containers publishing b's endpoint, or nil when no
+// lookup ran or b is not a forwarder row.
+func matchesFor(lk *engine.Lookup, b model.Binding) []model.Container {
+	if lk == nil || b.Proc == nil || !advise.IsForwarder(*b.Proc) {
+		return nil
+	}
+	addr := b.Endpoint.Addr()
+	return engine.MatchList(lk, b.Endpoint.Port(), b.Protocol.String(), &addr)
+}
+
+// pickFor returns the one container portpin would name in the stop command
+// for b's endpoint, or nil when there is none or the answer is unclear.
+func pickFor(lk *engine.Lookup, b model.Binding) *model.Container {
+	if lk == nil || b.Proc == nil || !advise.IsForwarder(*b.Proc) {
+		return nil
+	}
+	addr := b.Endpoint.Addr()
+	return engine.MatchFor(lk, b.Endpoint.Port(), b.Protocol.String(), &addr)
+}
+
+// attachEngineRows fills the forwarder rows of a report or listing with the
+// container the engine resolved for their endpoint, plus the lookup failure
+// note when the engine did not answer.
+func attachEngineRows(bindings []model.Binding, lk *engine.Lookup) {
+	if lk == nil {
+		return
+	}
+	for i := range bindings {
+		b := &bindings[i]
+		if b.Proc == nil || !advise.IsForwarder(*b.Proc) {
+			continue
+		}
+		addr := b.Endpoint.Addr()
+		b.Container = engine.MatchFor(lk, b.Endpoint.Port(), b.Protocol.String(), &addr)
+		if lk.Error != "" {
+			b.LookupError = lk.Error
+		}
+	}
+}
+
+// lookupErrOf returns the lookup failure note, "" when none.
+func lookupErrOf(lk *engine.Lookup) string {
+	if lk == nil {
+		return ""
+	}
+	return lk.Error
 }
 
 // consoleOutputWorkaround captures os.Stdout/os.Stderr into memory for the

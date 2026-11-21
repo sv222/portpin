@@ -19,19 +19,39 @@ import (
 // same endpoint - SO_REUSEADDR mDNS listeners open one per interface - and these
 // columns cannot tell those sockets apart. Only the table folds them; the JSON
 // report still lists every socket.
+//
+// A CONTAINER column appears only when at least one row resolved a container
+// behind it, and names that container.
 func Table(w io.Writer, bs []model.Binding) error {
 	if len(bs) == 0 {
 		_, err := fmt.Fprintln(w, "no matching endpoints")
 		return err
 	}
 
+	rows := foldRows(bs)
+	showContainer := false
+	for _, r := range rows {
+		if r.container != "-" {
+			showContainer = true
+			break
+		}
+	}
+
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "PROTO\tENDPOINT\tSTATE\tPID\tUSER\tPROCESS\tSOCKETS"); err != nil {
+	header := "PROTO\tENDPOINT\tSTATE\tPID\tUSER\tPROCESS\tSOCKETS"
+	if showContainer {
+		header += "\tCONTAINER"
+	}
+	if _, err := fmt.Fprintln(tw, header); err != nil {
 		return err
 	}
-	for _, r := range foldRows(bs) {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
-			r.proto, r.endpoint, r.state, r.pid, r.user, r.name, r.sockets); err != nil {
+	for _, r := range rows {
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%d",
+			r.proto, r.endpoint, r.state, r.pid, r.user, r.name, r.sockets)
+		if showContainer {
+			line += "\t" + r.container
+		}
+		if _, err := fmt.Fprintln(tw, line); err != nil {
 			return err
 		}
 	}
@@ -39,12 +59,13 @@ func Table(w io.Writer, bs []model.Binding) error {
 }
 
 type rowKey struct {
-	proto    string
-	endpoint string
-	state    string
-	pid      string
-	user     string
-	name     string
+	proto     string
+	endpoint  string
+	state     string
+	pid       string
+	user      string
+	name      string
+	container string
 }
 
 type tableRow struct {
@@ -59,12 +80,13 @@ func foldRows(bs []model.Binding) []tableRow {
 	at := make(map[rowKey]int, len(bs))
 	for _, b := range bs {
 		k := rowKey{
-			proto:    b.Protocol.String(),
-			endpoint: b.Endpoint.String(),
-			state:    b.State.String(),
-			pid:      "-",
-			user:     "-",
-			name:     "-",
+			proto:     b.Protocol.String(),
+			endpoint:  b.Endpoint.String(),
+			state:     b.State.String(),
+			pid:       "-",
+			user:      "-",
+			name:      "-",
+			container: "-",
 		}
 		if b.Proc != nil {
 			k.pid = strconv.FormatUint(uint64(b.Proc.PID), 10)
@@ -74,6 +96,9 @@ func foldRows(bs []model.Binding) []tableRow {
 			if b.Proc.Name != "" {
 				k.name = b.Proc.Name
 			}
+		}
+		if b.Container != nil && b.Container.Name != "" {
+			k.container = b.Container.Name
 		}
 		if i, ok := at[k]; ok {
 			rows[i].sockets++
