@@ -86,7 +86,7 @@ func TestLookupByPortParsesDockerLines(t *testing.T) {
 	if len(f.calls) != 1 {
 		t.Fatalf("ran %d commands, want 1: %v", len(f.calls), f.calls)
 	}
-	want := []string{"docker", "ps", "--no-trunc", "--filter", "publish=18080/tcp"}
+	want := []string{"docker", "ps", "--no-trunc", "--filter", "publish=18080/tcp", "--format", "{{json .}}"}
 	if strings.Join(f.calls[0], " ") != strings.Join(want, " ") {
 		t.Errorf("command = %v, want %v", f.calls[0], want)
 	}
@@ -191,7 +191,7 @@ func TestLookupReportsBadJSON(t *testing.T) {
 func TestLookupByPortFilterFollowsProtocol(t *testing.T) {
 	f := &fakeRunner{stdout: ""}
 	LookupByPort(f, 5353, "udp")
-	want := []string{"docker", "ps", "--no-trunc", "--filter", "publish=5353/udp"}
+	want := []string{"docker", "ps", "--no-trunc", "--filter", "publish=5353/udp", "--format", "{{json .}}"}
 	if strings.Join(f.calls[0], " ") != strings.Join(want, " ") {
 		t.Errorf("command = %v, want %v", f.calls[0], want)
 	}
@@ -432,4 +432,29 @@ func sleepArgs(d time.Duration) []string {
 		return []string{"cmd", "/c", fmt.Sprintf("timeout /t %d /nobreak", int(d.Seconds()))}
 	}
 	return []string{"sleep", fmt.Sprintf("%.0f", d.Seconds())}
+}
+
+// TestCLIRunnerTimeoutKillsScriptChildren covers the case that motivated
+// WaitDelay: a shell script leaves a child holding the output pipes, and
+// Wait would block on those pipes even after the script itself was killed.
+// Non-Windows only: the fixture is a shell script.
+func TestCLIRunnerTimeoutKillsScriptChildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "slow-docker")
+	body := "#!/bin/sh\ntrue\nsleep 30\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	_, _, err := CLI().Run([]string{script}, 150*time.Millisecond)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("wait returned after %s; the script's child kept the pipes open", took)
+	}
 }

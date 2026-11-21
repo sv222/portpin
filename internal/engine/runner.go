@@ -36,6 +36,10 @@ func (cliRunner) Run(argv []string, timeout time.Duration) (string, string, erro
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
+	// A timeout must also bound the wait for the output pipes: engine CLIs
+	// may leave grandchildren holding them, and Wait would block on those
+	// even after the process itself was killed.
+	cmd.WaitDelay = 100 * time.Millisecond
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf
 

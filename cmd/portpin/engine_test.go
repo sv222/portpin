@@ -136,7 +136,7 @@ func TestEmitFreeNamesThePublishingContainer(t *testing.T) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
 	}
-	want := []string{"docker", "ps", "--no-trunc", "--filter", "publish=18080/tcp"}
+	want := []string{"docker", "ps", "--no-trunc", "--filter", "publish=18080/tcp", "--format", "{{json .}}"}
 	if strings.Join(fake.calls[0], " ") != strings.Join(want, " ") {
 		t.Errorf("command = %v, want %v", fake.calls[0], want)
 	}

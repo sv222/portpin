@@ -53,13 +53,17 @@ func (l *Lookup) Found() bool {
 	return l != nil && l.Error == "" && len(l.Containers) > 0
 }
 
+// psFormat asks both CLIs for one JSON object per container, which
+// parsePsOutput reads.
+const psFormat = "{{json .}}"
+
 // LookupByPort asks the engines which containers publish port/proto. The
 // engine's own publish filter does the port matching, so the query reaches
 // the engine only when its CLI is on PATH.
 func LookupByPort(r Runner, port uint16, proto string) *Lookup {
 	filter := "publish=" + strconv.Itoa(int(port)) + "/" + proto
 	return lookup(func(engine string) ([]model.Container, error) {
-		out, stderr, err := r.Run([]string{engine, "ps", "--no-trunc", "--filter", filter}, Timeout)
+		out, stderr, err := r.Run([]string{engine, "ps", "--no-trunc", "--filter", filter, "--format", psFormat}, Timeout)
 		return runResult(engine, out, stderr, err)
 	})
 }
@@ -69,7 +73,7 @@ func LookupByPort(r Runner, port uint16, proto string) *Lookup {
 // for all rows.
 func LookupAll(r Runner) *Lookup {
 	return lookup(func(engine string) ([]model.Container, error) {
-		out, stderr, err := r.Run([]string{engine, "ps", "--no-trunc"}, Timeout)
+		out, stderr, err := r.Run([]string{engine, "ps", "--no-trunc", "--format", psFormat}, Timeout)
 		return runResult(engine, out, stderr, err)
 	})
 }
