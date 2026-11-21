@@ -7,13 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `portpin wait PORT [--timeout DUR] [--free|--busy]` blocks until the port is
-  free (the default) or in use. It exits 0 on success and 4 on timeout.
-- `portpin list` accepts `--protocol tcp|udp` and `--ip ADDR` to narrow the
-  listing to one protocol or to sockets bound to one address. Without them it
-  prints every listener, as before.
-- `portpin version` prints the version, the same output as `-V/--version`.
+## [0.4.0] - 2026-11-21
 
 ### Added
 - portpin asks the docker CLI, and podman when docker is absent or answers
@@ -36,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `name`, `image`, `ports`) on forwarder bindings and on the report for a
   free published port, plus a `lookup_error` string when the lookup failed.
   `docs/schema.json` documents both.
+- `portpin wait PORT [--timeout DUR] [--free|--busy]` blocks until the port is
+  free (the default) or in use. It exits 0 on success and 4 on timeout.
+- `portpin list` accepts `--protocol tcp|udp` and `--ip ADDR` to narrow the
+  listing to one protocol or to sockets bound to one address. Without them it
+  prints every listener, as before.
+- `portpin version` prints the version, the same output as `-V/--version`.
 
 ### Fixed
 - `portpin --help` and `-h` now exit with status 0 instead of 2.
