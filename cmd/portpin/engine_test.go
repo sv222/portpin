@@ -174,3 +174,57 @@ func TestEmitFreeWithFailedLookupKeepsPlaceholder(t *testing.T) {
 		t.Fatalf("lookup note missing:\n%s", out)
 	}
 }
+
+func TestEngineDisabledFlag(t *testing.T) {
+	t.Setenv("PORTPIN_NO_ENGINE", "")
+	if engineDisabled(flags{}) {
+		t.Error("engine lookups must run by default")
+	}
+	if !engineDisabled(flags{noEngine: true}) {
+		t.Error("--no-engine must switch the lookups off")
+	}
+}
+
+func TestEngineDisabledEnv(t *testing.T) {
+	for env, want := range map[string]bool{
+		"1": true, "true": true, "yes": true,
+		"0": false, "false": false, "off": false, "": false, "  ": false,
+	} {
+		t.Setenv("PORTPIN_NO_ENGINE", env)
+		if got := engineDisabled(flags{}); got != want {
+			t.Errorf("PORTPIN_NO_ENGINE=%q: disabled = %v, want %v", env, got, want)
+		}
+	}
+}
+
+func TestEmitFreeSkipsTheEngineWhenDisabled(t *testing.T) {
+	old := engineRunner
+	fake := &fakeEngine{stdout: engineDockerLine}
+	engineRunner = fake
+	defer func() { engineRunner = old }()
+
+	t.Setenv("PORTPIN_NO_ENGINE", "1")
+	out := captureStdout(t, func() {
+		emitFree(flags{}, render.Report{Target: "18080"}, model.Filter{Port: 18080, Protocol: model.TCP})
+	})
+	if len(fake.calls) != 0 {
+		t.Fatalf("the engine ran %d commands despite PORTPIN_NO_ENGINE=1", len(fake.calls))
+	}
+	if strings.Contains(out, "Container lookup") || strings.Contains(out, "Published by") {
+		t.Fatalf("disabled engine must produce no lookup output:\n%s", out)
+	}
+	if !strings.Contains(out, "port 18080 is free") {
+		t.Fatalf("free message missing:\n%s", out)
+	}
+
+	fake.calls = nil
+	out = captureStdout(t, func() {
+		emitFree(flags{noEngine: true}, render.Report{Target: "18080"}, model.Filter{Port: 18080, Protocol: model.TCP})
+	})
+	if len(fake.calls) != 0 {
+		t.Fatalf("the engine ran %d commands despite --no-engine", len(fake.calls))
+	}
+	if strings.Contains(out, "Container lookup") {
+		t.Fatalf("disabled engine must produce no lookup output:\n%s", out)
+	}
+}

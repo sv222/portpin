@@ -56,6 +56,7 @@ type flags struct {
 	group    bool
 	jsonOut  bool
 	version  bool
+	noEngine bool
 	// Set when the flag was given explicitly. Without them, list prints
 	// every listener rather than defaulting to TCP on any address.
 	protocolSet bool
@@ -86,8 +87,23 @@ func newMainFlags() *mainFlags {
 	fs.BoolVarP(&f.group, "group", "g", false, "also stop the target's process group and descendants")
 	fs.BoolVarP(&f.jsonOut, "json", "j", false, "emit machine-readable JSON on stdout")
 	fs.BoolVarP(&f.version, "version", "V", false, "print the version and exit")
+	fs.BoolVar(&f.noEngine, "no-engine", false, "do not query the docker or podman CLI for the container behind a port")
 	fs.Usage = func() { usage(fs) }
 	return m
+}
+
+// engineDisabled reports whether engine lookups are switched off for this
+// run: the --no-engine flag, or PORTPIN_NO_ENGINE in the environment set to
+// anything but the clear off values.
+func engineDisabled(f flags) bool {
+	if f.noEngine {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PORTPIN_NO_ENGINE"))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
 }
 
 func main() { os.Exit(run()) }
@@ -203,7 +219,7 @@ func runList(f flags) int {
 
 	// One engine lookup for the whole listing, run only when a forwarder row
 	// would otherwise keep its placeholder.
-	if anyForwarder(bindings) {
+	if anyForwarder(bindings) && !engineDisabled(f) {
 		attachEngineRows(bindings, engine.LookupAll(engineRunner))
 	}
 
@@ -258,7 +274,7 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 	// forwarder holds the port: that is the case where the placeholder line
 	// can be replaced by the container's name.
 	var lk *engine.Lookup
-	if anyForwarder(targets) {
+	if anyForwarder(targets) && !engineDisabled(f) {
 		lk = engine.LookupByPort(engineRunner, filter.Port, filter.Protocol.String())
 		attachEngineRows(report.Bindings, lk)
 	}
@@ -362,7 +378,10 @@ func runKill(f flags, filter model.Filter, rawTarget string) int {
 // Docker Desktop VMs look like. In JSON the container rides on the report,
 // since there is no binding row to carry it.
 func emitFree(f flags, report render.Report, filter model.Filter) int {
-	lk := engine.LookupByPort(engineRunner, filter.Port, filter.Protocol.String())
+	var lk *engine.Lookup
+	if !engineDisabled(f) {
+		lk = engine.LookupByPort(engineRunner, filter.Port, filter.Protocol.String())
+	}
 	matches := engine.MatchList(lk, filter.Port, filter.Protocol.String(), filter.IP)
 	pick := engine.MatchFor(lk, filter.Port, filter.Protocol.String(), filter.IP)
 	a := advise.ForFreePort(matches, pick, lookupErrOf(lk))
@@ -371,7 +390,7 @@ func emitFree(f flags, report render.Report, filter model.Filter) int {
 		msg += "\n" + strings.Join(a.Lines, "\n")
 	}
 	report.Container = pick
-	if lk.Error != "" {
+	if lookupErrOf(lk) != "" {
 		report.LookupError = lk.Error
 	}
 	emit(f, report, msg)
